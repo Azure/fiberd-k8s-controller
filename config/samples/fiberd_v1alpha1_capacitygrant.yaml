@@ -1,0 +1,20 @@
+apiVersion: fiberd.io/v1alpha1
+kind: CapacityGrant
+metadata:
+  name: capacitygrant-sample
+spec:
+  zygote:
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    command: ["/usr/local/bin/refzygote"]
+  fibers:
+    max: 32
+    warm: 4
+  wBudget: 64Mi
+  runtime: proc
+  podTemplate:
+    spec:
+      containers:
+      - name: fiberd
+        resources:
+          limits:
+            memory: 1Gi

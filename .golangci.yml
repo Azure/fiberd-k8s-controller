@@ -1,0 +1,48 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - errorlint
+    - forbidigo
+    - gocritic
+    - misspell
+    - unconvert
+  settings:
+    # Engineering rule: a unit test starts no process. The exclusion below
+    # confines this to _test.go files. Importing os/exec stays allowed, since
+    # fakes may name *exec.Cmd without starting one.
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^exec\.(Command|CommandContext)$
+          pkg: ^os/exec$
+          msg: "a unit test starts no process; fake the seam or move the test out of unit tests"
+        - pattern: ^exec\.Cmd\.(Start|Run|Output|CombinedOutput)$
+          pkg: ^os/exec$
+          msg: "a unit test starts no process; fake the seam or move the test out of unit tests"
+        - pattern: ^os\.(StartProcess|Executable)$
+          pkg: ^os$
+          msg: "a unit test starts no process and never re-executes itself"
+  exclusions:
+    generated: lax
+    rules:
+      # Production code may start processes. Only unit tests are guarded.
+      - linters:
+          - forbidigo
+        path-except: _test\.go$
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Azure/fiberd-k8s-controller
+        - github.com/helayoty/fiberd
+  exclusions:
+    generated: lax
