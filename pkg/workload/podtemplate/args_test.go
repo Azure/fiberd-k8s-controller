@@ -28,20 +28,25 @@ func TestCheckArgs(t *testing.T) {
 		{name: "value holding an equals sign", args: []string{"-registry=example.com/zygotes?tag=a=b"}},
 		{name: "bare boolean flag", args: []string{"-gvisor-templates-on-disk"}},
 		{name: "two-dash boolean with a value", args: []string{"--gvisor-templates-on-disk=false"}},
-		{name: "owned flag", args: []string{"-issuer=https://evil.example"}, wantErr: "args[0]: Forbidden: -issuer is set by the controller"},
-		{name: "owned flag in the two-dash form", args: []string{"--verifier=insecure-json"}, wantErr: "-verifier is set by the controller"},
-		{name: "owned boolean", args: []string{"-insecure-plaintext"}, wantErr: "-insecure-plaintext is set by the controller"},
-		{name: "owned boolean with a value", args: []string{"--all-caps=true"}, wantErr: "-all-caps is set by the controller"},
-		{name: "owned flag later in the list", args: []string{"-registry=r", "-runc-rootfs=/"}, wantErr: "args[1]"},
-		{name: "template for the grant's digest", args: []string{"-template=sha256:" + strings.Repeat("ab", 32) + "=/bin/sh"}, wantErr: "-template is set by the controller"},
-		{name: "template for the default key", args: []string{"--template=default=/bin/sh"}, wantErr: "-template is set by the controller"},
-		{name: "binary flag home", args: []string{"-home=standalone"}, wantErr: "args[0]: Forbidden: -home is set by the controller"},
-		{name: "binary flag home in the two-dash form", args: []string{"--home=kubernetes"}, wantErr: "-home is set by the controller"},
-		{name: "binary flag home without a value", args: []string{"--home"}, wantErr: "-home is set by the controller"},
-		{name: "binary flag pod-name", args: []string{"-pod-name=x"}, wantErr: "args[0]: Forbidden: -pod-name is set by the controller"},
-		{name: "binary flag pod-uid", args: []string{"-pod-uid=x"}, wantErr: "-pod-uid is set by the controller"},
-		{name: "binary flag pod-namespace", args: []string{"-pod-namespace=x"}, wantErr: "-pod-namespace is set by the controller"},
-		{name: "binary boolean version", args: []string{"--version"}, wantErr: "-version is set by the controller"},
+		{name: "every tenant flag", args: []string{"-delta-registry=r", "-delta-key=/k", "-delta-seal-key=/s", "-delta-trust=/t", "-devices=/dev/x", "-engine-memory-max=1", "-grant-ceiling=1", "-hyperlight-guest=/g", "-parity=off"}},
+		{name: "controller flag", args: []string{"-issuer=https://evil.example"}, wantErr: "args[0]: Forbidden: -issuer is not a flag a tenant may set"},
+		{name: "controller flag in the two-dash form", args: []string{"--verifier=insecure-json"}, wantErr: "-verifier is not a flag a tenant may set"},
+		{name: "controller boolean", args: []string{"-insecure-plaintext"}, wantErr: "-insecure-plaintext is not a flag a tenant may set"},
+		{name: "controller boolean with a value", args: []string{"--all-caps=true"}, wantErr: "-all-caps is not a flag a tenant may set"},
+		{name: "controller flag later in the list", args: []string{"-registry=r", "-runc-rootfs=/"}, wantErr: "args[1]"},
+		{name: "template for the grant's digest", args: []string{"-template=sha256:" + strings.Repeat("ab", 32) + "=/bin/sh"}, wantErr: "-template is not a flag a tenant may set"},
+		{name: "template for the default key", args: []string{"--template=default=/bin/sh"}, wantErr: "-template is not a flag a tenant may set"},
+		{name: "operator flag", args: []string{"-userns-pool=0:65536"}, wantErr: "-userns-pool is not a flag a tenant may set"},
+		{name: "operator key", args: []string{"-audit-key=/k"}, wantErr: "-audit-key is not a flag a tenant may set"},
+		{name: "test hook", args: []string{"-admin-unsafe"}, wantErr: "-admin-unsafe is not a flag a tenant may set"},
+		{name: "unknown flag", args: []string{"-no-such-flag=1"}, wantErr: "-no-such-flag is not a flag a tenant may set"},
+		{name: "binary flag home", args: []string{"-home=standalone"}, wantErr: "args[0]: Forbidden: -home is not a flag a tenant may set"},
+		{name: "binary flag home in the two-dash form", args: []string{"--home=kubernetes"}, wantErr: "-home is not a flag a tenant may set"},
+		{name: "binary flag home without a value", args: []string{"--home"}, wantErr: "-home is not a flag a tenant may set"},
+		{name: "binary flag pod-name", args: []string{"-pod-name=x"}, wantErr: "args[0]: Forbidden: -pod-name is not a flag a tenant may set"},
+		{name: "binary flag pod-uid", args: []string{"-pod-uid=x"}, wantErr: "-pod-uid is not a flag a tenant may set"},
+		{name: "binary flag pod-namespace", args: []string{"-pod-namespace=x"}, wantErr: "-pod-namespace is not a flag a tenant may set"},
+		{name: "binary boolean version", args: []string{"--version"}, wantErr: "-version is not a flag a tenant may set"},
 		{name: "non-boolean flag without a value", args: []string{"-registry"}, wantErr: "must carry its value as -registry=value"},
 		{name: "flag and value as two items", args: []string{"-registry", "example.com/zygotes"}, wantErr: "args[1]"},
 		{name: "flag and value split by a space", args: []string{"-registry example.com/zygotes"}, wantErr: "args[0]: Invalid value"},
@@ -69,32 +74,30 @@ func TestCheckArgs(t *testing.T) {
 	}
 }
 
-func TestOwnedFlags(t *testing.T) {
+func TestTenantFlags(t *testing.T) {
 	want := []string{
-		"admin-unsafe", "all-caps", "cgroup-root", "client-ca", "endpoint-family", "endpoint-host",
-		"engine-uid", "fiber-hide", "grants-dir", "gvisor-rootfs", "handoff-key", "handoff-listen",
-		"home", "http", "insecure-plaintext", "issuer", "jwks-max-stale", "listen", "max-lease", "node-id",
-		"pod-name", "pod-namespace", "pod-uid", "runc-rootfs", "runtime", "stale-ttl", "state",
-		"template", "tls-cert", "tls-key", "verifier", "version",
+		"delta-key", "delta-registry", "delta-seal-key", "delta-trust", "devices", "engine",
+		"engine-memory-max", "grant-ceiling", "gvisor-templates-on-disk", "hyperlight-guest",
+		"parity", "registry",
 	}
 	cases := []struct {
 		name string
 		got  func() []string
 	}{
-		{name: "sorted and complete", got: OwnedFlags},
+		{name: "sorted and complete", got: TenantFlags},
 		{
 			name: "a caller cannot change the set",
 			got: func() []string {
-				first := OwnedFlags()
+				first := TenantFlags()
 				first[0] = "changed"
-				return OwnedFlags()
+				return TenantFlags()
 			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if diff := cmp.Diff(want, tc.got()); diff != "" {
-				t.Errorf("OwnedFlags mismatch (-want +got):\n%s", diff)
+				t.Errorf("TenantFlags mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -108,65 +111,42 @@ func fiberdFlags() *flag.FlagSet {
 	return fs
 }
 
-// testHooksBuilt reports whether fiberd was built with the
-// fiberd_testhooks tag, which registers admin-unsafe.
-func testHooksBuilt(fs *flag.FlagSet) bool { return fs.Lookup("status-interval") != nil }
-
-// TestOwnedFlagsAreFiberdFlags keeps the owned fiberd flags honest. Each
-// must be a flag fiberd's Config.Bind registers, so a renamed fiberd flag
-// fails here instead of slipping past CheckArgs. Each binary flag, -home
-// and the Kubernetes home's flags, must not be one, or fiberd's cmd/fiberd
-// would bind the same name twice. The check lives in
-// this test rather than at controller startup, since importing pkg/fiberd
-// would pull fiberd's whole runtime into the controller binary.
-func TestOwnedFlagsAreFiberdFlags(t *testing.T) {
+// TestTenantFlagsAreFiberdFlags keeps the tenant flags honest. Each must
+// be a flag fiberd's Config.Bind registers, so a renamed fiberd flag
+// fails here instead of letting a tenant arg through to a fiberd that
+// refuses it. The check lives in this test rather than at controller
+// startup, since importing pkg/fiberd would pull fiberd's whole runtime
+// into the controller binary.
+func TestTenantFlagsAreFiberdFlags(t *testing.T) {
 	fs := fiberdFlags()
-	type flagCase struct {
-		name       string
-		wantFiberd bool
-	}
-	cases := make([]flagCase, 0, len(ownedFiberdFlags)+len(binaryFlags))
-	for _, name := range ownedFiberdFlags {
-		cases = append(cases, flagCase{name: name, wantFiberd: true})
-	}
-	for _, name := range binaryFlags {
-		cases = append(cases, flagCase{name: name})
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "admin-unsafe" && !testHooksBuilt(fs) {
-				t.Skip("fiberd registers -admin-unsafe only with the fiberd_testhooks tag")
-			}
-			if got := fs.Lookup(tc.name) != nil; got != tc.wantFiberd {
-				t.Errorf("fiberd registers -%s = %v, want %v", tc.name, got, tc.wantFiberd)
+	for _, name := range TenantFlags() {
+		t.Run(name, func(t *testing.T) {
+			if fs.Lookup(name) == nil {
+				t.Errorf("fiberd does not register -%s", name)
 			}
 		})
 	}
 }
 
 // TestTenantBoolFlagsMatchFiberd keeps tenantBoolFlags equal to the
-// boolean flags fiberd registers that a tenant may set.
+// boolean flags among the tenant flags, as fiberd registers them.
 func TestTenantBoolFlagsMatchFiberd(t *testing.T) {
 	fs := fiberdFlags()
 	var fromFiberd []string
 	fs.VisitAll(func(f *flag.Flag) {
 		b, ok := f.Value.(interface{ IsBoolFlag() bool })
-		if ok && b.IsBoolFlag() && !ownedFlags[f.Name] {
+		if ok && b.IsBoolFlag() && tenantFlags[f.Name] {
 			fromFiberd = append(fromFiberd, f.Name)
 		}
 	})
-	ours := make([]string, 0, len(tenantBoolFlags))
-	for name := range tenantBoolFlags {
-		ours = append(ours, name)
-	}
 	slices.Sort(fromFiberd)
-	slices.Sort(ours)
 
 	cases := []struct {
 		name      string
 		got, want []string
 	}{
-		{name: "tenant boolean flags", got: ours, want: fromFiberd},
+		{name: "tenant boolean flags", got: TenantBoolFlags(), want: fromFiberd},
+		{name: "every boolean flag is a tenant flag", got: TenantBoolFlags(), want: slices.DeleteFunc(TenantFlags(), func(n string) bool { return !tenantBoolFlags[n] })},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,9 +157,9 @@ func TestTenantBoolFlagsMatchFiberd(t *testing.T) {
 	}
 }
 
-// TestControllerArgsAreOwned checks that a tenant can pass none of the
-// flags the controller sets, -template included.
-func TestControllerArgsAreOwned(t *testing.T) {
+// TestControllerArgsAreNotTenantFlags checks that a tenant can pass none
+// of the flags the controller sets, -template included.
+func TestControllerArgsAreNotTenantFlags(t *testing.T) {
 	cases := []struct {
 		name    string
 		runtime v1alpha1.Runtime
@@ -195,7 +175,7 @@ func TestControllerArgsAreOwned(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, arg := range controllerArgs(tc.runtime, "d=/z", tc.opts.withDefaults()) {
 				name, _, _ := strings.Cut(strings.TrimPrefix(arg, "-"), "=")
-				if !ownedFlags[name] {
+				if tenantFlags[name] {
 					t.Errorf("the controller sets -%s, but CheckArgs lets a tenant set it too", name)
 				}
 			}

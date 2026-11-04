@@ -36,17 +36,11 @@ func TestBuildMetadata(t *testing.T) {
 			wantAnnotations: map[string]string{},
 		},
 		{
-			name: "fiberd labels override only their three keys",
-			labels: map[string]string{
-				"app":                   "web",
-				v1alpha1.LabelGrant:     "other",
-				v1alpha1.LabelGrantUID:  "forged",
-				v1alpha1.LabelManagedBy: "helm",
-				"fiberd.io/extra":       "kept",
-			},
+			// TestBuildErrors covers the fiberd.io keys, which Build refuses.
+			name:   "the managed-by label is the controller's",
+			labels: map[string]string{"app": "web", v1alpha1.LabelManagedBy: "helm"},
 			wantLabels: map[string]string{
 				"app":                   "web",
-				"fiberd.io/extra":       "kept",
 				v1alpha1.LabelGrant:     "web",
 				v1alpha1.LabelGrantUID:  testUID,
 				v1alpha1.LabelManagedBy: v1alpha1.ManagedBy,
@@ -63,8 +57,8 @@ func TestBuildMetadata(t *testing.T) {
 			wantAnnotations: map[string]string{},
 		},
 		{
-			name:            "tenant annotations stay and a forged hash is replaced",
-			annotations:     map[string]string{"team": "a", AnnotationGrantHash: "forged"},
+			name:            "tenant annotations join the hash",
+			annotations:     map[string]string{"team": "a"},
 			wantLabels:      map[string]string{v1alpha1.LabelGrant: "web", v1alpha1.LabelGrantUID: testUID, v1alpha1.LabelManagedBy: v1alpha1.ManagedBy},
 			wantAnnotations: map[string]string{"team": "a"},
 		},
@@ -350,18 +344,10 @@ func TestBuildEnv(t *testing.T) {
 		fieldEnv("POD_NAMESPACE", "metadata.namespace"),
 		fieldEnv("POD_UID", "metadata.uid"),
 	}
-	// A ConfigMap key NAME under the prefix POD_ would reach the container
-	// as POD_NAME. The kubelet lets an env entry win over envFrom, so the
-	// explicit downward API entry must be there for -node-id to expand.
-	identityFrom := []corev1.EnvFromSource{{
-		Prefix:       "POD_",
-		ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "identity"}},
-	}}
 	cases := []struct {
-		name    string
-		env     []corev1.EnvVar
-		envFrom []corev1.EnvFromSource
-		want    []corev1.EnvVar
+		name string
+		env  []corev1.EnvVar
+		want []corev1.EnvVar
 	}{
 		{name: "no tenant env", want: podEnv},
 		{
@@ -369,24 +355,13 @@ func TestBuildEnv(t *testing.T) {
 			env:  []corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}},
 			want: append([]corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}}, podEnv...),
 		},
-		{
-			name:    "envFrom cannot shadow the Pod identity",
-			envFrom: identityFrom,
-			want:    podEnv,
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
-				container(cg).Env = tc.env
-				container(cg).EnvFrom = tc.envFrom
-			})
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) { container(cg).Env = tc.env })
 			tmpl := mustBuild(t, cg, testOptions())
 			if diff := cmp.Diff(tc.want, tmpl.Spec.Containers[0].Env); diff != "" {
 				t.Errorf("env mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tc.envFrom, tmpl.Spec.Containers[0].EnvFrom); diff != "" {
-				t.Errorf("envFrom differs from what the tenant wrote (-want +got):\n%s", diff)
 			}
 			if got := tmpl.Spec.Containers[0].Image; got != testImage {
 				t.Errorf("image = %q, want %q", got, testImage)
@@ -431,6 +406,13 @@ func TestBuildErrors(t *testing.T) {
 		return func(cg *v1alpha1.CapacityGrant) { f(container(cg)) }
 	}
 	emptyDir := corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+	// Two rows share it, so each proves one of the two errors is reported.
+	commandAndHook := ctrMod(func(c *corev1.Container) {
+		c.Command = []string{"/bin/sh"}
+		c.Lifecycle = &corev1.Lifecycle{PreStop: &corev1.LifecycleHandler{Exec: &corev1.ExecAction{Command: []string{"/bin/sh"}}}}
+	})
+	const loaderWhy = "would bend fiberd's TLS or run tenant code inside fiberd"
+	const sourceWhy = "Forbidden: must be an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume"
 	tenantProbe := &corev1.Probe{
 		ProbeHandler:  corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromInt32(9090)}},
 		PeriodSeconds: 7,
@@ -484,6 +466,75 @@ func TestBuildErrors(t *testing.T) {
 			name:    "command set",
 			mod:     ctrMod(func(c *corev1.Container) { c.Command = []string{"/bin/sh"} }),
 			wantErr: "spec.podTemplate.spec.containers[0].command",
+		},
+		{
+			name: "lifecycle hook set",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.Lifecycle = &corev1.Lifecycle{PostStart: &corev1.LifecycleHandler{Exec: &corev1.ExecAction{Command: []string{"/bin/sh"}}}}
+			}),
+			wantErr: "spec.podTemplate.spec.containers[0].lifecycle",
+		},
+		{
+			name:    "command and lifecycle hook together report the command",
+			mod:     commandAndHook,
+			wantErr: "containers[0].command: Forbidden",
+		},
+		{
+			name:    "command and lifecycle hook together report the hook",
+			mod:     commandAndHook,
+			wantErr: "containers[0].lifecycle: Forbidden",
+		},
+		{
+			name: "envFrom source",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.EnvFrom = []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}
+			}),
+			wantErr: "spec.podTemplate.spec.containers[0].envFrom",
+		},
+		{
+			name: "host aliases",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.HostAliases = []corev1.HostAlias{{IP: "10.0.0.9", Hostnames: []string{"issuer.example"}}}
+			}),
+			wantErr: "spec.podTemplate.spec.hostAliases",
+		},
+		{
+			name:    "DNS config",
+			mod:     podMod(func(s *corev1.PodSpec) { s.DNSConfig = &corev1.PodDNSConfig{Nameservers: []string{"10.0.0.9"}} }),
+			wantErr: "spec.podTemplate.spec.dnsConfig",
+		},
+		{
+			name:    "runtime class",
+			mod:     podMod(func(s *corev1.PodSpec) { s.RuntimeClassName = ptr.To("kata") }),
+			wantErr: "spec.podTemplate.spec.runtimeClassName",
+		},
+		{
+			name: "Pod SELinux options",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.SecurityContext = &corev1.PodSecurityContext{SELinuxOptions: &corev1.SELinuxOptions{Type: "spc_t"}}
+			}),
+			wantErr: "spec.podTemplate.spec.securityContext.seLinuxOptions",
+		},
+		{
+			name: "Pod Windows options",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.SecurityContext = &corev1.PodSecurityContext{WindowsOptions: &corev1.WindowsSecurityContextOptions{}}
+			}),
+			wantErr: "spec.podTemplate.spec.securityContext.windowsOptions",
+		},
+		{
+			name: "container SELinux options",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.SecurityContext = &corev1.SecurityContext{SELinuxOptions: &corev1.SELinuxOptions{Type: "spc_t"}}
+			}),
+			wantErr: "spec.podTemplate.spec.containers[0].securityContext.seLinuxOptions",
+		},
+		{
+			name: "container Windows options",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.SecurityContext = &corev1.SecurityContext{WindowsOptions: &corev1.WindowsSecurityContextOptions{}}
+			}),
+			wantErr: "spec.podTemplate.spec.containers[0].securityContext.windowsOptions",
 		},
 		{
 			name:    "init containers",
@@ -541,14 +592,41 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.podTemplate.spec.hostUsers",
 		},
 		{
-			name:    "volume named fiberd-state",
-			mod:     podMod(func(s *corev1.PodSpec) { s.Volumes = []corev1.Volume{{Name: "fiberd-state", VolumeSource: emptyDir}} }),
+			name: "volume named fiberd-state",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "fiberd-state", VolumeSource: emptyDir}}
+			}),
 			wantErr: "spec.podTemplate.spec.volumes[0].name",
 		},
 		{
-			name:    "volume named fiberd-grants",
-			mod:     podMod(func(s *corev1.PodSpec) { s.Volumes = []corev1.Volume{{Name: "fiberd-grants", VolumeSource: emptyDir}} }),
+			name: "volume named fiberd-grants",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "fiberd-grants", VolumeSource: emptyDir}}
+			}),
 			wantErr: "spec.podTemplate.spec.volumes[0].name",
+		},
+		{
+			name: "hostPath volume",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "host", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/"}}}}
+			}),
+			wantErr: "spec.podTemplate.spec.volumes[0]: " + sourceWhy,
+		},
+		{
+			name: "image volume",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "img", VolumeSource: corev1.VolumeSource{Image: &corev1.ImageVolumeSource{Reference: "example.com/img"}}}}
+			}),
+			wantErr: "spec.podTemplate.spec.volumes[0]: " + sourceWhy,
+		},
+		{
+			name: "projected service account token",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+					Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token"}}},
+				}}}}
+			}),
+			wantErr: "spec.podTemplate.spec.volumes[0].projected: Forbidden: must not project a service account token, which fibers could read",
 		},
 		{
 			name: "mount of the grants volume elsewhere",
@@ -591,6 +669,87 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.podTemplate.spec.containers[0].env[0].name",
 		},
 		{
+			name:    "env SSL_CERT_FILE",
+			mod:     ctrMod(func(c *corev1.Container) { c.Env = []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "/ca/ca.pem"}} }),
+			wantErr: "env[0].name: Forbidden: SSL_CERT_FILE would change which issuer fiberd trusts",
+		},
+		{
+			name:    "env LD_PRELOAD",
+			mod:     ctrMod(func(c *corev1.Container) { c.Env = []corev1.EnvVar{{Name: "LD_PRELOAD", Value: "/x.so"}} }),
+			wantErr: "env[0].name: Forbidden: LD_PRELOAD " + loaderWhy,
+		},
+		{
+			name:    "env GODEBUG",
+			mod:     ctrMod(func(c *corev1.Container) { c.Env = []corev1.EnvVar{{Name: "GODEBUG", Value: "x"}} }),
+			wantErr: "env[0].name: Forbidden: GODEBUG " + loaderWhy,
+		},
+		{
+			name: "mount over the trust roots",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/etc/ssl/certs"}}
+			}),
+			wantErr: "volumeMounts[0].mountPath: Forbidden: must not be at, under or above /etc/ssl",
+		},
+		{
+			name: "mount above the trust roots",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/etc"}}
+			}),
+			wantErr: "volumeMounts[0].mountPath: Forbidden: must not be at, under or above /etc/ssl",
+		},
+		{
+			name: "mount at the resolver file",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/etc/resolv.conf"}}
+			}),
+			wantErr: "volumeMounts[0].mountPath: Forbidden: must not be at, under or above /etc/resolv.conf",
+		},
+		{
+			name: "relative mount path",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "var/cache"}}
+			}),
+			wantErr: `volumeMounts[0].mountPath: Invalid value: "var/cache": must be an absolute path`,
+		},
+		{
+			name:    "termination message path under the state path",
+			mod:     ctrMod(func(c *corev1.Container) { c.TerminationMessagePath = "/var/lib/fiberd/log" }),
+			wantErr: "containers[0].terminationMessagePath: Forbidden: must not be at or under /var/lib/fiberd",
+		},
+		{
+			name:    "termination message path at the resolver file",
+			mod:     ctrMod(func(c *corev1.Container) { c.TerminationMessagePath = "/etc/resolv.conf" }),
+			wantErr: "containers[0].terminationMessagePath: Forbidden: must not be at, under or above /etc/resolv.conf",
+		},
+		{
+			name: "reserved label under fiberd.io",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.PodTemplate.Labels = map[string]string{v1alpha1.LabelGrantUID: "forged"}
+			},
+			wantErr: "spec.podTemplate.metadata.labels[fiberd.io/grant-uid]: Forbidden: is reserved",
+		},
+		{
+			name: "reserved label under a fiberd.io subdomain",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.PodTemplate.Labels = map[string]string{"zygote.fiberd.io/name": "x"}
+			},
+			wantErr: "spec.podTemplate.metadata.labels[zygote.fiberd.io/name]: Forbidden: is reserved",
+		},
+		{
+			name: "forged hash annotation",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.PodTemplate.Annotations = map[string]string{AnnotationGrantHash: "forged"}
+			},
+			wantErr: "spec.podTemplate.metadata.annotations[fiberd.io/grant-hash]: Forbidden: is reserved",
+		},
+		{
+			name: "reserved Multus network annotation",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.PodTemplate.Annotations = map[string]string{"k8s.v1.cni.cncf.io/networks": "host"}
+			},
+			wantErr: "spec.podTemplate.metadata.annotations[k8s.v1.cni.cncf.io/networks]: Forbidden: is reserved",
+		},
+		{
 			name:    "port named grpc",
 			mod:     ctrMod(func(c *corev1.Container) { c.Ports = []corev1.ContainerPort{{Name: "grpc", ContainerPort: 9000}} }),
 			wantErr: "spec.podTemplate.spec.containers[0].ports[0].name",
@@ -610,12 +769,12 @@ func TestBuildErrors(t *testing.T) {
 		{
 			name:    "tenant template for the grant's digest",
 			mod:     ctrMod(func(c *corev1.Container) { c.Args = []string{"-template=" + testDigest + "=/bin/sh"} }),
-			wantErr: "spec.podTemplate.spec.containers[0].args[0]: Forbidden: -template is set by the controller",
+			wantErr: "spec.podTemplate.spec.containers[0].args[0]: Forbidden: -template is not a flag a tenant may set",
 		},
 		{
 			name:    "tenant pod-name flag",
 			mod:     ctrMod(func(c *corev1.Container) { c.Args = []string{"-pod-name=forged"} }),
-			wantErr: "spec.podTemplate.spec.containers[0].args[0]: Forbidden: -pod-name is set by the controller",
+			wantErr: "spec.podTemplate.spec.containers[0].args[0]: Forbidden: -pod-name is not a flag a tenant may set",
 		},
 		{
 			name:    "tenant startup probe",

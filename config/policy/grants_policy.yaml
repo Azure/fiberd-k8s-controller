@@ -1,0 +1,190 @@
+# The admission guard of CapacityGrants. A grant Pod runs with the overlay
+# the controller adds, so this policy refuses what a tenant could use to
+# reach past that overlay. Its parameter is the GrantPolicy named default.
+# The builder repeats the checks that matter at reconcile time, since a
+# grant stored before a rule existed must still not reach a Pod.
+#
+# Runs on Kubernetes 1.30 and later. The CEL used here is core CEL, the
+# strings extension and macros, all present since 1.30.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fiberd-grants
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: admission
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: fiberd.io/v1alpha1
+    kind: GrantPolicy
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["fiberd.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["capacitygrants"]
+  matchConditions:
+    # Metadata-only writes, such as the controller removing its finalizer,
+    # must pass under a GrantPolicy that has since been tightened.
+    - name: spec-changed
+      expression: "request.operation == 'CREATE' || object.spec != oldObject.spec"
+  variables:
+    # The CRD requires podTemplate.spec with exactly one container.
+    - name: container
+      expression: "object.spec.podTemplate.spec.containers[0]"
+    - name: args
+      expression: "has(variables.container.args) ? variables.container.args : []"
+    - name: image
+      expression: "has(variables.container.image) ? variables.container.image : ''"
+    # The fiberd flags a tenant may set, sorted. Every other flag is the
+    # controller's or the operator's. A test keeps the list equal to
+    # podtemplate.TenantFlags(), which says why each is the tenant's.
+    - name: tenantFlags
+      expression: |-
+        [
+          'delta-key',
+          'delta-registry',
+          'delta-seal-key',
+          'delta-trust',
+          'devices',
+          'engine',
+          'engine-memory-max',
+          'grant-ceiling',
+          'gvisor-templates-on-disk',
+          'hyperlight-guest',
+          'parity',
+          'registry'
+        ]
+    - name: tenantFlagArgs
+      expression: "variables.tenantFlags.map(f, '-' + f) + variables.tenantFlags.map(f, '--' + f)"
+    # The boolean fiberd flags a tenant may write bare. Any other bare flag
+    # would take the controller's first flag as its value. A test keeps it
+    # equal to podtemplate's tenantBoolFlags.
+    - name: bareArgs
+      expression: "['-gvisor-templates-on-disk', '--gvisor-templates-on-disk']"
+    # The overlay sets the Pod identity, fiberd trusts the issuer through its
+    # process's root pool and proxy settings, and the loader and runtime
+    # variables would run tenant code inside fiberd or bend its TLS.
+    - name: ownedEnv
+      expression: "['POD_NAME', 'POD_NAMESPACE', 'POD_UID', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy', 'GODEBUG', 'LD_PRELOAD', 'LD_LIBRARY_PATH']"
+    - name: envNames
+      expression: "has(variables.container.env) ? variables.container.env.map(e, e.name) : []"
+    - name: volumes
+      expression: "has(object.spec.podTemplate.spec.volumes) ? object.spec.podTemplate.spec.volumes : []"
+    # The kubelet bind-mounts a node file at terminationMessagePath, so it
+    # is a mount like any other.
+    - name: mountPaths
+      expression: |-
+        (has(variables.container.volumeMounts) ? variables.container.volumeMounts.map(m, m.mountPath) : [])
+        + (has(variables.container.volumeDevices) ? variables.container.volumeDevices.map(d, d.devicePath) : [])
+        + (has(variables.container.terminationMessagePath) ? [variables.container.terminationMessagePath] : [])
+    # The builder's state and grants directories, the directories later
+    # changes mount under /var/run/fiberd and /var/run/secrets/fiberd.io,
+    # and their /run aliases, since /var/run is a symlink in fiberd's image.
+    - name: ownedDirs
+      expression: "['/var/lib/fiberd', '/var/run/fiberd', '/run/fiberd', '/var/run/secrets/fiberd.io', '/run/secrets/fiberd.io']"
+    # The system trust roots decide which issuer fiberd believes, and the
+    # resolver files decide where the issuer's name points. Nothing of the
+    # controller's is mounted beneath them, so a mount above them replaces
+    # them as surely as a mount at them.
+    - name: trustPaths
+      expression: "['/etc/ssl', '/etc/pki', '/etc/hosts', '/etc/resolv.conf']"
+    # A mount naming an overlay volume would expose fiberd's keys or grants
+    # at a path fibers can see.
+    - name: ownedVolumes
+      expression: "['fiberd-state', 'fiberd-grants']"
+    - name: volumeNames
+      expression: |-
+        variables.volumes.map(v, v.name)
+        + (has(variables.container.volumeMounts) ? variables.container.volumeMounts.map(m, m.name) : [])
+        + (has(variables.container.volumeDevices) ? variables.container.volumeDevices.map(d, d.name) : [])
+    - name: templateKeys
+      expression: |-
+        ((has(object.spec.podTemplate.metadata) && has(object.spec.podTemplate.metadata.labels)) ? object.spec.podTemplate.metadata.labels.map(k, k) : [])
+        + ((has(object.spec.podTemplate.metadata) && has(object.spec.podTemplate.metadata.annotations)) ? object.spec.podTemplate.metadata.annotations.map(k, k) : [])
+    # fiberd.io keys are the controller's. The AppArmor and seccomp
+    # annotations would conflict with the fields the controller sets. The
+    # rest are honoured by node components and reach host networks, host
+    # devices or the sandbox, which the Pod-level rules otherwise prevent.
+    - name: reservedKeyPrefixes
+      expression: "['fiberd.io/', 'container.apparmor.security.beta.kubernetes.io/', 'seccomp.security.alpha.kubernetes.io/', 'container.seccomp.security.alpha.kubernetes.io/', 'k8s.v1.cni.cncf.io/', 'cni.projectcalico.org/', 'io.kubernetes.cri-o.', 'dev.gvisor.', 'io.katacontainers.']"
+    - name: privileged
+      expression: "has(variables.container.securityContext) && has(variables.container.securityContext.privileged) && variables.container.securityContext.privileged"
+    # Nobody has measured the capability set of these runtimes yet, so the
+    # builder runs their Pods privileged whatever the tenant wrote.
+    - name: privilegedRuntimes
+      expression: "['gvisor', 'hyperlight']"
+    # The CRD defaults runtimes, so the guard only keeps an object written
+    # past the schema from erroring the policy. Absent means none.
+    - name: runtimes
+      expression: "has(params.spec.runtimes) ? params.spec.runtimes : []"
+  validations:
+    # A flag and its value are one item, so no tenant item can be read as the
+    # value of another. The pattern is podtemplate.ArgPattern.
+    - expression: "variables.args.all(a, a.matches('^-{1,2}[a-z][a-z0-9-]*(=.*)?$'))"
+      messageExpression: "'arg ' + variables.args.filter(a, !a.matches('^-{1,2}[a-z][a-z0-9-]*(=.*)?$'))[0] + ' is not one flag such as -registry=example.com'"
+      message: "every podTemplate arg must be one flag such as -registry=example.com"
+      reason: Invalid
+    - expression: "variables.args.all(a, a.split('=')[0] in variables.tenantFlagArgs)"
+      messageExpression: "'arg ' + variables.args.filter(a, !(a.split('=')[0] in variables.tenantFlagArgs))[0] + ' names a flag a tenant may not set'"
+      message: "a podTemplate arg names a flag a tenant may not set"
+      reason: Forbidden
+    - expression: "variables.args.all(a, a.contains('=') || a in variables.bareArgs)"
+      messageExpression: "'arg ' + variables.args.filter(a, !a.contains('=') && !(a in variables.bareArgs))[0] + ' must carry its value as -name=value'"
+      message: "a podTemplate arg must carry its value as -name=value, only a boolean flag may be bare"
+      reason: Invalid
+    # An absent image is allowed. A later change defaults it from the runtime.
+    - expression: "variables.image == '' || variables.image.matches('@sha256:[a-f0-9]{64}$')"
+      message: "the fiberd container image must carry a digest, such as ghcr.io/azure/fiberd:0.4.0@sha256:..."
+      reason: Invalid
+    # The GrantPolicy schema forbids a bare host entry, so ':' after an entry
+    # can only start a tag, never a port.
+    - expression: "variables.image == '' || params.spec.images.exists(p, variables.image == p || variables.image.startsWith(p + '/') || variables.image.startsWith(p + ':') || variables.image.startsWith(p + '@'))"
+      messageExpression: "'image ' + variables.image + ' is not under a repository listed in GrantPolicy default spec.images'"
+      message: "the fiberd container image is not under a repository listed in GrantPolicy default spec.images"
+      reason: Forbidden
+    - expression: "!variables.envNames.exists(n, n in variables.ownedEnv)"
+      messageExpression: "'env ' + variables.envNames.filter(n, n in variables.ownedEnv)[0] + ' is not a variable a tenant may set'"
+      message: "a podTemplate env variable is not one a tenant may set"
+      reason: Forbidden
+    - expression: "!variables.templateKeys.exists(k, k.contains('.fiberd.io/') || variables.reservedKeyPrefixes.exists(p, k.startsWith(p)))"
+      messageExpression: "'podTemplate key ' + variables.templateKeys.filter(k, k.contains('.fiberd.io/') || variables.reservedKeyPrefixes.exists(p, k.startsWith(p)))[0] + ' is reserved'"
+      message: "a podTemplate label or annotation key is reserved"
+      reason: Forbidden
+    # Every other source reaches the node or pulls with its credentials.
+    - expression: "variables.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.downwardAPI) || has(v.projected) || has(v.persistentVolumeClaim) || has(v.ephemeral))"
+      messageExpression: "'volume ' + variables.volumes.filter(v, !(has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.downwardAPI) || has(v.projected) || has(v.persistentVolumeClaim) || has(v.ephemeral)))[0].name + ' is not an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume'"
+      message: "a podTemplate volume must be an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume"
+      reason: Forbidden
+    # A token volume is minted for the grant ServiceAccount, and fibers could
+    # read it at a tenant path.
+    - expression: "!variables.volumes.exists(v, has(v.projected) && has(v.projected.sources) && v.projected.sources.exists(s, has(s.serviceAccountToken)))"
+      messageExpression: "'volume ' + variables.volumes.filter(v, has(v.projected) && has(v.projected.sources) && v.projected.sources.exists(s, has(s.serviceAccountToken)))[0].name + ' projects a service account token'"
+      message: "a podTemplate volume must not project a service account token"
+      reason: Forbidden
+    - expression: "!variables.volumeNames.exists(n, n in variables.ownedVolumes)"
+      messageExpression: "'volume ' + variables.volumeNames.filter(n, n in variables.ownedVolumes)[0] + ' is mounted by the controller'"
+      message: "the volumes fiberd-state and fiberd-grants are mounted by the controller"
+      reason: Forbidden
+    # Unclean or relative paths would slip past the owned directory check.
+    - expression: "!variables.mountPaths.exists(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..'))"
+      messageExpression: "'mount path ' + variables.mountPaths.filter(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..'))[0] + ' is not a clean absolute path'"
+      message: "mountPath, devicePath and terminationMessagePath must be clean absolute paths"
+      reason: Invalid
+    # The builder's ownedDir semantics, so /var/run/fiberdx is fine.
+    - expression: "!variables.mountPaths.exists(p, variables.ownedDirs.exists(d, p == d || p.startsWith(d + '/')))"
+      messageExpression: "'mount path ' + variables.mountPaths.filter(p, variables.ownedDirs.exists(d, p == d || p.startsWith(d + '/')))[0] + ' is at or under a directory the controller mounts'"
+      message: "no mountPath, devicePath or terminationMessagePath may be at or under a directory the controller mounts, such as /var/lib/fiberd or /var/run/fiberd"
+      reason: Forbidden
+    - expression: "!variables.mountPaths.exists(p, p == '/' || variables.trustPaths.exists(t, p == t || p.startsWith(t + '/') || t.startsWith(p + '/')))"
+      messageExpression: "'mount path ' + variables.mountPaths.filter(p, p == '/' || variables.trustPaths.exists(t, p == t || p.startsWith(t + '/') || t.startsWith(p + '/')))[0] + ' would replace the trust roots or the resolver files'"
+      message: "no mountPath, devicePath or terminationMessagePath may be at, under or above /etc/ssl, /etc/pki, /etc/hosts or /etc/resolv.conf"
+      reason: Forbidden
+    - expression: "!(variables.privileged || (has(object.spec.runtime) && object.spec.runtime in variables.privilegedRuntimes)) || (has(params.spec.privilegedNamespaces) && object.metadata.namespace in params.spec.privilegedNamespaces)"
+      message: "a privileged fiberd container, which the gvisor and hyperlight runtimes need, is allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
+      reason: Forbidden
+    - expression: "has(object.spec.runtime) && object.spec.runtime in variables.runtimes"
+      messageExpression: "has(object.spec.runtime) ? 'runtime ' + object.spec.runtime + ' is not listed in GrantPolicy default spec.runtimes' : 'spec.runtime is required'"
+      message: "spec.runtime must be listed in GrantPolicy default spec.runtimes"
+      reason: Forbidden

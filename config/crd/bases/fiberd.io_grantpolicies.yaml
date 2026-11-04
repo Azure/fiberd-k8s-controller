@@ -1,0 +1,103 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: grantpolicies.fiberd.io
+spec:
+  group: fiberd.io
+  names:
+    kind: GrantPolicy
+    listKind: GrantPolicyList
+    plural: grantpolicies
+    singular: grantpolicy
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GrantPolicy is the cluster's policy for CapacityGrants. The fiberd-grants
+          admission policy reads the one named default and refuses a grant that
+          breaks it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec is the desired policy.
+            properties:
+              images:
+                description: |-
+                  images lists the repositories a grant Pod image may come from, each fully qualified
+                  such as ghcr.io/azure/fiberd. An entry matches an image that equals it or continues
+                  with /, : or @, so ghcr.io/azure/fiberd matches ghcr.io/azure/fiberd:0.4.0@sha256:...
+                  and not ghcr.io/azure/fiberd-runc. Every image must also carry a digest.
+                items:
+                  maxLength: 255
+                  pattern: ^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$
+                  type: string
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              privilegedNamespaces:
+                description: |-
+                  privilegedNamespaces are the namespaces whose grants may set securityContext.privileged
+                  on the fiberd container, or ask for the gvisor or hyperlight runtime, which run
+                  privileged until their capability sets are measured.
+                items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 256
+                type: array
+                x-kubernetes-list-type: set
+              runtimes:
+                default:
+                - proc
+                - runc
+                description: |-
+                  runtimes are the fiberd runtimes a grant may ask for. gvisor and hyperlight also need the
+                  grant's namespace in privilegedNamespaces.
+                items:
+                  description: |-
+                    Runtime is the fiberd backend that runs the fibers of a grant.
+                    The values are the names fiberd's -runtime flag takes.
+                  enum:
+                  - proc
+                  - runc
+                  - gvisor
+                  - hyperlight
+                  type: string
+                maxItems: 4
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+            required:
+            - images
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: the fiberd-grants binding reads only the GrantPolicy named default
+          reason: FieldValueInvalid
+          rule: self.metadata.name == 'default'
+    served: true
+    storage: true

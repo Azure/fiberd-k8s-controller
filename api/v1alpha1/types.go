@@ -52,7 +52,8 @@ type CapacityGrantSpec struct {
 
 	// podTemplate is the template of the grant Pod, written as in a Deployment.
 	// It holds exactly one container named fiberd.
-	// The validation rules list the fields a tenant may not set.
+	// The validation rules list the fields a tenant may not set. The fiberd container must
+	// also set a memory limit.
 	// +required
 	// +kubebuilder:validation:XValidation:rule="has(self.spec)",message="podTemplate.spec is required",fieldPath=".spec",reason="FieldValueRequired"
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || (self.spec.containers.size() == 1 && self.spec.containers[0].name == 'fiberd')",message="podTemplate.spec.containers must hold exactly one container named fiberd",fieldPath=".spec.containers",reason="FieldValueInvalid"
@@ -62,6 +63,13 @@ type CapacityGrantSpec struct {
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || !has(self.spec.nodeName)",message="podTemplate.spec.nodeName is not allowed, the scheduler places the Pod",fieldPath=".spec.nodeName",reason="FieldValueForbidden"
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || !has(self.spec.restartPolicy) || self.spec.restartPolicy == 'Always'",message="podTemplate.spec.restartPolicy must be Always",fieldPath=".spec.restartPolicy",reason="FieldValueInvalid"
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || ((!has(self.spec.hostPID) || !self.spec.hostPID) && (!has(self.spec.hostNetwork) || !self.spec.hostNetwork) && (!has(self.spec.hostIPC) || !self.spec.hostIPC) && (!has(self.spec.shareProcessNamespace) || !self.spec.shareProcessNamespace) && !has(self.spec.hostUsers))",message="podTemplate.spec hostPID, hostNetwork, hostIPC, shareProcessNamespace and hostUsers are set by the controller",fieldPath=".spec",reason="FieldValueForbidden"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.containers.size() == 0 || (!has(self.spec.containers[0].startupProbe) && !has(self.spec.containers[0].readinessProbe) && !has(self.spec.containers[0].livenessProbe))",message="podTemplate.spec.containers[0] startupProbe, readinessProbe and livenessProbe are set by the controller",fieldPath=".spec.containers",reason="FieldValueForbidden"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || !has(self.spec.resources)",message="podTemplate.spec.resources is not allowed, the controller sizes the Pod through the fiberd container",fieldPath=".spec.resources",reason="FieldValueForbidden"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.containers.size() == 0 || (has(self.spec.containers[0].resources) && has(self.spec.containers[0].resources.limits) && 'memory' in self.spec.containers[0].resources.limits)",message="the fiberd container must set resources.limits.memory, fiberd carves fibers from it",fieldPath=".spec.containers",reason="FieldValueRequired"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].lifecycle)",message="podTemplate.spec.containers[0].lifecycle is not allowed, a hook would run a tenant command with fiberd's capabilities",fieldPath=".spec.containers",reason="FieldValueForbidden"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].envFrom)",message="podTemplate.spec.containers[0].envFrom is not allowed, a source could set SSL_CERT_FILE or a proxy variable and change which issuer fiberd trusts",fieldPath=".spec.containers",reason="FieldValueForbidden"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || (!has(self.spec.hostAliases) && !has(self.spec.dnsConfig) && !has(self.spec.runtimeClassName))",message="podTemplate.spec.hostAliases, dnsConfig and runtimeClassName are not allowed, fiberd resolves its issuer through the cluster DNS and runs its own runtimes",fieldPath=".spec",reason="FieldValueForbidden"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || ((!has(self.spec.securityContext) || (!has(self.spec.securityContext.seLinuxOptions) && !has(self.spec.securityContext.windowsOptions))) && (self.spec.containers.size() == 0 || !has(self.spec.containers[0].securityContext) || (!has(self.spec.containers[0].securityContext.seLinuxOptions) && !has(self.spec.containers[0].securityContext.windowsOptions))))",message="podTemplate seLinuxOptions and windowsOptions are not allowed, they would unconfine a container that already holds SYS_ADMIN",fieldPath=".spec",reason="FieldValueForbidden"
 	PodTemplate corev1.PodTemplateSpec `json:"podTemplate"`
 }
 

@@ -1,0 +1,10 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fiberd-grantpolicies
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: admission
+spec:
+  policyName: fiberd-grantpolicies
+  validationActions: [Deny]

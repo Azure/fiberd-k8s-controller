@@ -4,53 +4,23 @@ package envtest_test
 
 import (
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-)
 
-// podSpecPath is spec.podTemplate.spec in a CapacityGrant.
-var podSpecPath = []string{"spec", "podTemplate", "spec"}
+	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
+)
 
 // loadSample returns config/samples' CapacityGrant in the default
 // namespace.
 func loadSample(t *testing.T) *unstructured.Unstructured {
 	t.Helper()
-	objs, err := readObjects(filepath.Join(repoRoot, "config", "samples", "fiberd_v1alpha1_capacitygrant.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(objs) != 1 {
-		t.Fatalf("the sample holds %d objects, want 1", len(objs))
-	}
-	objs[0].SetNamespace("default")
-	return objs[0]
-}
-
-// setPodField sets one field of spec.podTemplate.spec.
-func setPodField(t *testing.T, u *unstructured.Unstructured, field string, value any) {
-	t.Helper()
-	if err := unstructured.SetNestedField(u.Object, value, slices.Concat(podSpecPath, []string{field})...); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// editContainers hands the pod template's containers to edit and stores
-// what it returns.
-func editContainers(t *testing.T, u *unstructured.Unstructured, edit func([]any) []any) {
-	t.Helper()
-	path := slices.Concat(podSpecPath, []string{"containers"})
-	cs, _, err := unstructured.NestedSlice(u.Object, path...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := unstructured.SetNestedSlice(u.Object, edit(cs), path...); err != nil {
-		t.Fatal(err)
-	}
+	u := testutil.ReadSample(t, filepath.Join(repoRoot, "config", "samples", "fiberd_v1alpha1_capacitygrant.yaml"))
+	u.SetNamespace("default")
+	return u
 }
 
 // TestCRDValidation creates each object with a server-side dry run, so
@@ -78,14 +48,14 @@ func TestCRDValidation(t *testing.T) {
 		{
 			name: "no pod spec",
 			mutate: func(_ *testing.T, u *unstructured.Unstructured) {
-				unstructured.RemoveNestedField(u.Object, podSpecPath...)
+				unstructured.RemoveNestedField(u.Object, testutil.PodSpecPath...)
 			},
 			wantErr: "podTemplate.spec is required",
 		},
 		{
 			name: "a second container",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
-				editContainers(t, u, func(cs []any) []any {
+				testutil.EditContainers(t, u, func(cs []any) []any {
 					return append(cs, map[string]any{"name": "sidecar", "image": "registry.k8s.io/pause:3.10"})
 				})
 			},
@@ -94,39 +64,115 @@ func TestCRDValidation(t *testing.T) {
 		{
 			name: "a container command",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
-				editContainers(t, u, func(cs []any) []any {
-					cs[0].(map[string]any)["command"] = []any{"/bin/sh"}
-					return cs
-				})
+				testutil.SetContainerField(t, u, "command", []any{"/bin/sh"})
 			},
 			wantErr: "the fiberd container's command is the image entrypoint",
 		},
 		{
 			name: "an init container",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
-				setPodField(t, u, "initContainers", []any{map[string]any{"name": "init", "image": "registry.k8s.io/pause:3.10"}})
+				testutil.SetPodField(t, u, "initContainers", []any{map[string]any{"name": "init", "image": "registry.k8s.io/pause:3.10"}})
 			},
 			wantErr: "initContainers and ephemeralContainers are not allowed",
 		},
 		{
-			name:    "a service account name",
-			mutate:  func(t *testing.T, u *unstructured.Unstructured) { setPodField(t, u, "serviceAccountName", "default") },
+			name: "a service account name",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetPodField(t, u, "serviceAccountName", "default")
+			},
 			wantErr: "serviceAccountName is set by the controller",
 		},
 		{
 			name:    "a node name",
-			mutate:  func(t *testing.T, u *unstructured.Unstructured) { setPodField(t, u, "nodeName", "node-a") },
+			mutate:  func(t *testing.T, u *unstructured.Unstructured) { testutil.SetPodField(t, u, "nodeName", "node-a") },
 			wantErr: "nodeName is not allowed",
 		},
 		{
-			name:    "a restart policy other than Always",
-			mutate:  func(t *testing.T, u *unstructured.Unstructured) { setPodField(t, u, "restartPolicy", "Never") },
+			name: "a restart policy other than Always",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetPodField(t, u, "restartPolicy", "Never")
+			},
 			wantErr: "restartPolicy must be Always",
 		},
 		{
 			name:    "the host network",
-			mutate:  func(t *testing.T, u *unstructured.Unstructured) { setPodField(t, u, "hostNetwork", true) },
+			mutate:  func(t *testing.T, u *unstructured.Unstructured) { testutil.SetPodField(t, u, "hostNetwork", true) },
 			wantErr: "hostPID, hostNetwork, hostIPC, shareProcessNamespace and hostUsers are set by the controller",
+		},
+		{
+			name: "no memory limit",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.EditContainers(t, u, func(cs []any) []any {
+					unstructured.RemoveNestedField(cs[0].(map[string]any), "resources", "limits", "memory")
+					return cs
+				})
+			},
+			wantErr: "must set resources.limits.memory",
+		},
+		{
+			name: "a startup probe",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetContainerField(t, u, "startupProbe", map[string]any{"tcpSocket": map[string]any{"port": int64(1)}})
+			},
+			wantErr: "startupProbe, readinessProbe and livenessProbe are set by the controller",
+		},
+		{
+			name: "Pod-level resources",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetPodField(t, u, "resources", map[string]any{"limits": map[string]any{"memory": "1Gi"}})
+			},
+			wantErr: "podTemplate.spec.resources is not allowed",
+		},
+		{
+			name: "a postStart hook",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetContainerField(t, u, "lifecycle", map[string]any{
+					"postStart": map[string]any{"exec": map[string]any{"command": []any{"/bin/sh"}}},
+				})
+			},
+			wantErr: "lifecycle is not allowed",
+		},
+		{
+			name: "host aliases",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetPodField(t, u, "hostAliases", []any{map[string]any{"ip": "10.0.0.9", "hostnames": []any{"issuer.example"}}})
+			},
+			wantErr: "hostAliases, dnsConfig and runtimeClassName are not allowed",
+		},
+		{
+			name: "a DNS config",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetPodField(t, u, "dnsConfig", map[string]any{"nameservers": []any{"10.0.0.9"}})
+			},
+			wantErr: "hostAliases, dnsConfig and runtimeClassName are not allowed",
+		},
+		{
+			name: "a runtime class",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetPodField(t, u, "runtimeClassName", "kata")
+			},
+			wantErr: "hostAliases, dnsConfig and runtimeClassName are not allowed",
+		},
+		{
+			name: "an envFrom source",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetContainerField(t, u, "envFrom", []any{map[string]any{"configMapRef": map[string]any{"name": "trust"}}})
+			},
+			wantErr: "envFrom is not allowed",
+		},
+		{
+			name: "container SELinux options",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetContainerField(t, u, "securityContext", map[string]any{"seLinuxOptions": map[string]any{"type": "spc_t"}})
+			},
+			wantErr: "seLinuxOptions and windowsOptions are not allowed",
+		},
+		{
+			name: "Pod SELinux options",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetPodField(t, u, "securityContext", map[string]any{"seLinuxOptions": map[string]any{"type": "spc_t"}})
+			},
+			wantErr: "seLinuxOptions and windowsOptions are not allowed",
 		},
 		{
 			name:    "a name longer than 56 characters",

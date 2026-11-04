@@ -31,7 +31,7 @@ fiberd and the controller live in two repositories. A piece that a Slurm or Dock
 | Service | Tenant namespace | The controller, as the CapacityGrant's controller reference |
 | ReplicaSet and Pod | Tenant namespace | Kubernetes' Deployment and ReplicaSet controllers |
 | ServiceAccount `fiberd-grant` | Tenant namespace | The cluster admin, who [onboards the namespace](../../README.md#onboard-a-tenant-namespace) |
-| `GrantPolicy` | Cluster scoped | The cluster admin, read by the admission policy |
+| `GrantPolicy` | Cluster scoped | The cluster admin, who creates the one named `default` that the admission policy reads |
 | ClusterRole `fiberd-grant-author` | Cluster scoped | The cluster admin, bound to a tenant group when a namespace is onboarded |
 | Signing key Secret | Controller namespace | The controller |
 
@@ -39,7 +39,7 @@ The controller creates one Deployment with one replica and one ClusterIP Service
 
 **What the tenant owns.** The spec sets `zygote`, the program and its image digest, and `fibers`, the cap and the gVisor warm count. `writeBudget` is the memory fibers may write, and `callerThumbprint` binds the grant to one caller's certificate ([security](#security)). The rest is `runtime` and `podTemplate`.
 
-In `podTemplate` the tenant owns every scheduling field and the one container named `fiberd`, with its image, args and resources. It also owns that container's security context, except privilege, capabilities and the seccomp and AppArmor profiles. A device request, extended resource or resource claim goes in its resources.
+In `podTemplate` the tenant owns every scheduling field and the one container named `fiberd`, with its image, args and resources. It also owns that container's security context, except privilege, capabilities, the seccomp and AppArmor profiles, and SELinux and Windows options. A device request, extended resource or resource claim goes in its resources.
 
 **What the controller overlays.** It sets the home and its own flags last. It sets the Pod identity, probes, volumes, service account, fiberd labels, privilege fields and a readiness gate on the zygote-ready Pod condition. Requests are copied from limits for Guaranteed QoS, since fiberd carves fibers from the memory limit. A tenant field that collides with the overlay invalidates the CapacityGrant.
 
@@ -82,13 +82,16 @@ How a tenant's caller obtains the grant it presents with each request is not yet
 
 ## Security
 
+The tenant owns the Pod. The image allowlist is what makes the fiberd binary trustworthy, and the trust roots decide which controller that binary believes. Every field that can change either is refused.
+
 | Concern | How it is met |
 | --- | --- |
 | TLS | One fiberd CA comes from cert-manager. Its csi-driver issues each grant Pod a serving certificate. fiberd serves mutual TLS only and trusts that CA for clients. Callers dial the Service name and present a client certificate. The controller's own endpoints use the same CA. |
 | Bound grants | `callerThumbprint` puts one caller's certificate thumbprint into the grant. fiberd refuses the grant over any other certificate, so a copied grant is worthless. Replicas of one caller share a certificate and so share the grant. |
 | Least privilege per runtime | Every runtime drops all capabilities and adds back the set fiberd core measured for it. proc and runc also get a seccomp profile written for fiberd. AppArmor stays unconfined for now. A privileged container is allowed only in namespaces the `GrantPolicy` lists. |
-| CRD rules | CEL rules on the CRD fix the Pod's shape. The template has one container named `fiberd` and no init or ephemeral containers. It sets no service account, node name or host namespaces. |
-| Admission policy | A fail-closed policy reads the `GrantPolicy`. It requires a pinned image from an allowed prefix, a memory limit, and flag-shaped args that name no controller-owned flag. It refuses host paths, reserved labels and mounts over fiberd's directories. Only the author role may create CapacityGrants. |
+| CRD rules | CEL rules on the CRD fix the Pod's shape. The template has one container named `fiberd` and no init or ephemeral containers. It sets no service account, node name or host namespaces. The rules also refuse what the overlay cannot reset. That is probes, lifecycle hooks, `envFrom`, Pod-level resources, host aliases, DNS config, the runtime class, and SELinux and Windows options. The `fiberd` container must set a memory limit. |
+| Admission policy | A policy reads the `GrantPolicy` named `default` and fails closed, so every CapacityGrant write is refused while it is missing. Args may name only the fiberd flags a tenant sets. The image must carry a digest and come from a listed repository, and the runtime must be listed. The policy refuses reserved labels and annotations, volume sources outside its allowlist, and projected service account tokens. It refuses mounts over fiberd's directories, the trust roots and the resolver files, and env that changes fiberd's trust. A privileged container and the gvisor and hyperlight runtimes need a listed namespace. A second policy keeps `default` from being deleted. Only the author role may create CapacityGrants. |
+| Pod Security | A grant Pod needs SYS_ADMIN and SYS_PTRACE and runs with Unconfined AppArmor and seccomp, which exceeds the `baseline` level, so a namespace that hosts grant Pods enforces `privileged` and the admission policy is the guard there. That label admits any privileged Pod, so tenants who may create Pods directly should not share a namespace with grant Pods. |
 | Grants stay inside the Pod | No grant is an API object or a Secret. The home writes it into a memory-backed grants directory that fibers cannot see. Tenants need no `secrets` access, and `fiberd-grant` can read no Secret. |
 | Signing keys | The keys live in one Secret in the controller's namespace. The key set publishes every key still needed, so grants signed before a rotation verify until they expire. |
 

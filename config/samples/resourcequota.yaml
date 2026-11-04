@@ -1,0 +1,8 @@
+# A namespace admin applies this to cap the CapacityGrants in a namespace.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: fiberd-grants
+spec:
+  hard:
+    count/capacitygrants.fiberd.io: "4"
