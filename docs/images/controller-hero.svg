@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="660" viewBox="0 0 1000 660" role="img" aria-labelledby="controller-hero-title controller-hero-desc">
+  <title id="controller-hero-title">Ask for capacity once. Clone fibers inside the Pod.</title>
+  <desc id="controller-hero-desc">Setup, once: 1, a tenant applies a CapacityGrant; 2, the controller watches it and creates a Deployment, drawn as a frame holding one grant Pod, which holds one container named fiberd, which holds the fiberd process, the warm zygote and the fibers forked from it; 3, fiberd fetches the Pod's own grant from the controller. Requests, repeat: 4, the tenant's app asks the Service for a fiber, the Service selects the Pod and the request reaches fiberd; 5, fiberd answers with the fiber's address; 6, the app talks to that fiber directly.</desc>
+  <style>
+    :root{--bg:#f7f9fc;--panel:#fff;--ink:#172033;--muted:#5d6b7d;--border:#b8c4d4;--blue:#3165b5;--blue-bg:#eaf1ff;--teal:#13776f;--teal-bg:#e8f7f4;--violet:#704aa1;--violet-bg:#f2edfa;--amber:#a76500;--amber-bg:#fff3d6}
+    @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#a3adba;--border:#3d4652;--blue:#79a7ff;--blue-bg:#17243d;--teal:#53c7b8;--teal-bg:#102923;--violet:#c09cff;--violet-bg:#251b35;--amber:#f0b44d;--amber-bg:#30240f}}
+    text{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;fill:var(--ink)}
+    .bg{fill:var(--bg)}.title{font-size:30px;font-weight:700}.name{font-size:20px;font-weight:700}.note{font-size:16px;fill:var(--muted)}.num{font-size:14px;font-weight:700;text-anchor:middle}.center{text-anchor:middle}.blue{fill:var(--blue)}.teal{fill:var(--teal)}.violet{fill:var(--violet)}.amber{fill:var(--amber)}
+    .box{fill:var(--panel);stroke-width:2}.b-blue{stroke:var(--blue)}.b-teal{stroke:var(--teal)}.b-violet{stroke:var(--violet)}.doc{fill:var(--blue-bg);stroke:var(--blue);stroke-width:2}.zygote{fill:var(--amber-bg);stroke:var(--amber);stroke-width:2}.fiber{fill:var(--teal-bg);stroke:var(--teal);stroke-width:2}
+    .frame{fill:none;stroke-width:1.5}.actor{fill:var(--panel);stroke:var(--blue);stroke-width:2}.divider{stroke:var(--border);stroke-width:1.5}
+    .flow{fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}.f-blue{stroke:var(--blue)}.f-teal{stroke:var(--teal)}.f-violet{stroke:var(--violet)}.f-amber{stroke:var(--amber)}.call{stroke-dasharray:6 5}.selects{stroke-dasharray:2 5}
+    .n-blue{fill:var(--blue-bg);stroke:var(--blue);stroke-width:1.5}.n-teal{fill:var(--teal-bg);stroke:var(--teal);stroke-width:1.5}.n-violet{fill:var(--violet-bg);stroke:var(--violet);stroke-width:1.5}
+    text.amber{fill:#9e5e00}@media(prefers-color-scheme:dark){text.amber{fill:var(--amber)}}
+  </style>
+  <defs>
+    <marker id="controller-hero-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#3165b5"/></marker>
+    <marker id="controller-hero-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#13776f"/></marker>
+    <marker id="controller-hero-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#704aa1"/></marker>
+    <marker id="controller-hero-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#a76500"/></marker>
+  </defs>
+  <rect class="bg" width="1000" height="660"/>
+  <text class="title" x="40" y="48">Ask for capacity once. Clone fibers inside the Pod.</text>
+  <path class="divider" d="M40 68H960"/>
+  <text class="note" x="40" y="90">setup · once</text>
+  <text class="note" x="40" y="330">requests · repeat</text>
+
+  <text class="name center blue" x="100" y="122">Tenant</text>
+  <circle class="actor" cx="100" cy="150" r="12"/>
+  <path class="actor" d="M76 190V181C76 161 124 161 124 181V190"/>
+
+  <path class="doc" d="M180 130H360L380 150V210H180Z"/>
+  <text class="name blue" x="200" y="176">CapacityGrant</text>
+
+  <rect class="box b-violet" x="400" y="130" width="160" height="80" rx="4"/>
+  <text class="name violet" x="420" y="176">controller</text>
+
+  <text class="name center blue" x="100" y="374">Caller</text>
+  <circle class="actor" cx="100" cy="400" r="12"/>
+  <path class="actor" d="M76 440V431C76 411 124 411 124 431V440"/>
+
+  <rect class="box b-blue" x="180" y="370" width="200" height="80" rx="4"/>
+  <text class="name blue" x="200" y="416">Service</text>
+
+  <rect class="frame b-violet" x="600" y="120" width="360" height="480" rx="12"/>
+  <text class="name violet" x="616" y="146">Deployment</text>
+  <rect class="frame b-teal" x="620" y="170" width="320" height="410" rx="10"/>
+  <text class="name teal" x="636" y="196">grant Pod</text>
+  <rect class="frame b-teal" x="640" y="220" width="280" height="340" rx="8"/>
+  <text class="name teal" x="656" y="246">fiberd container</text>
+
+  <rect class="box b-teal" x="656" y="290" width="104" height="140" rx="4"/>
+  <text class="name teal" x="672" y="330">fiberd</text>
+  <text class="note" x="672" y="356">home</text>
+
+  <rect class="zygote" x="812" y="290" width="100" height="50" rx="3"/>
+  <rect class="zygote" x="806" y="296" width="100" height="50" rx="3"/>
+  <rect class="zygote" x="800" y="302" width="100" height="50" rx="3"/>
+  <text class="name amber" x="818" y="334">zygote</text>
+
+  <circle class="fiber" cx="860" cy="400" r="22"/>
+  <text class="note center" x="860" y="405" style="fill:var(--teal)">fiber</text>
+  <circle class="fiber" cx="860" cy="452" r="22"/>
+  <text class="note center" x="860" y="457" style="fill:var(--teal)">fiber</text>
+  <circle class="fiber" cx="860" cy="504" r="22"/>
+  <text class="note center" x="860" y="509" style="fill:var(--teal)">fiber</text>
+
+  <path class="flow f-teal" d="M760 327H800" marker-end="url(#controller-hero-teal)"/>
+  <path class="flow f-amber" d="M810 352V400H838" marker-end="url(#controller-hero-amber)"/>
+  <path class="flow f-amber" d="M810 400V452H838" marker-end="url(#controller-hero-amber)"/>
+  <path class="flow f-amber" d="M810 452V504H838" marker-end="url(#controller-hero-amber)"/>
+  <text class="note" x="800" y="380" text-anchor="end">fork</text>
+
+  <path class="flow f-blue" d="M128 170H180" marker-end="url(#controller-hero-blue)"/>
+  <circle class="n-blue" cx="190" cy="112" r="11"/>
+  <text class="num blue" x="190" y="117">1</text>
+  <text class="note" x="208" y="117">apply</text>
+
+  <path class="flow f-violet call" d="M400 170H380" marker-end="url(#controller-hero-violet)"/>
+  <circle class="n-violet" cx="410" cy="112" r="11"/>
+  <text class="num violet" x="410" y="117">2</text>
+  <text class="note" x="428" y="117">reconcile</text>
+  <path class="flow f-violet" d="M560 170H600" marker-end="url(#controller-hero-violet)"/>
+
+  <path class="flow f-teal call" d="M656 320H580V190H560" marker-end="url(#controller-hero-teal)"/>
+  <circle class="n-teal" cx="470" cy="290" r="11"/>
+  <text class="num teal" x="470" y="295">3</text>
+  <text class="note" x="488" y="295">fetch grant</text>
+
+  <path class="flow f-blue call" d="M128 410H180" marker-end="url(#controller-hero-blue)"/>
+  <circle class="n-blue" cx="190" cy="352" r="11"/>
+  <text class="num blue" x="190" y="357">4</text>
+  <text class="note" x="208" y="357">ask for a fiber</text>
+  <path class="flow f-blue call" d="M380 410H656" marker-end="url(#controller-hero-blue)"/>
+  <path class="flow f-blue selects" d="M380 440H620" marker-end="url(#controller-hero-blue)"/>
+  <text class="note" x="500" y="458" text-anchor="middle">selects</text>
+
+  <path class="flow f-blue call" d="M700 430V500H160V425H128" marker-end="url(#controller-hero-blue)"/>
+  <circle class="n-blue" cx="190" cy="522" r="11"/>
+  <text class="num blue" x="190" y="527">5</text>
+  <text class="note" x="208" y="527">the fiber's address</text>
+
+  <path class="flow f-blue call" d="M100 444V630H860V526" marker-end="url(#controller-hero-blue)"/>
+  <circle class="n-blue" cx="500" cy="612" r="11"/>
+  <text class="num blue" x="500" y="617">6</text>
+  <text class="note" x="518" y="617">talk to the fiber</text>
+</svg>

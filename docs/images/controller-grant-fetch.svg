@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1140" viewBox="0 0 1000 1140" role="img" aria-labelledby="controller-grant-fetch-title controller-grant-fetch-desc">
+  <title id="controller-grant-fetch-title">Each grant Pod fetches its own grant</title>
+  <desc id="controller-grant-fetch-desc">Sequence with four lifelines, the home and fiberd inside the grant Pod, the controller and the API server. First grant: the home reads its projected token and requests a grant with it. The controller runs a TokenReview, gets the Pod name and UID, finds the CapacityGrant through the owner chain and signs, then returns the grant and its expiry. The home delivers it to fiberd, which fetches the key set, verifies the grant and warms the zygote, and the home sets the zygote-ready condition. Every half lease the home renews, gets a new expiry and delivers it. While the controller is away, renewals go unanswered, the home retries, and the grant serves until its lease ends.</desc>
+  <style>
+    :root{--bg:#f7f9fc;--panel:#fff;--ink:#172033;--muted:#5d6b7d;--border:#b8c4d4;--teal:#13776f;--violet:#704aa1}
+    @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#a3adba;--border:#3d4652;--teal:#53c7b8;--violet:#c09cff}}
+    text{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;fill:var(--ink)}
+    .bg{fill:var(--bg)}.title{font-size:30px;font-weight:700}.name{font-size:20px;font-weight:700}.msg{font-size:16px}.note{font-size:16px;fill:var(--muted)}.center{text-anchor:middle}.teal{fill:var(--teal)}.violet{fill:var(--violet)}
+    .box{fill:var(--panel);stroke-width:2}.b-teal{stroke:var(--teal)}.b-violet{stroke:var(--violet)}.b-muted{stroke:var(--muted)}.frame{fill:none;stroke-width:1.5}.divider{stroke:var(--border);stroke-width:1.5}.lifeline{stroke:var(--border);stroke-width:1.5;stroke-dasharray:5 5}
+    .flow{fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}.f-teal{stroke:var(--teal)}.f-violet{stroke:var(--violet)}.f-muted{stroke:var(--muted)}.reply{stroke-dasharray:6 5}
+  </style>
+  <defs>
+    <marker id="controller-grant-fetch-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#13776f"/></marker>
+    <marker id="controller-grant-fetch-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#704aa1"/></marker>
+    <marker id="controller-grant-fetch-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#5d6b7d"/></marker>
+  </defs>
+  <rect class="bg" width="1000" height="1140"/>
+  <text class="title" x="40" y="48">Each grant Pod fetches its own grant</text>
+  <text class="note" x="40" y="78">A Deployment's Pods are named only once they exist, so the grant goes to the Pod, never into the template.</text>
+  <path class="divider" d="M40 96H960"/>
+
+  <rect class="box b-teal" x="80" y="110" width="160" height="56" rx="4"/>
+  <text class="name teal center" x="160" y="133">home</text>
+  <text class="note center" x="160" y="155">in the grant Pod</text>
+  <rect class="box b-teal" x="320" y="110" width="160" height="56" rx="4"/>
+  <text class="name teal center" x="400" y="133">fiberd</text>
+  <text class="note center" x="400" y="155">in the grant Pod</text>
+  <rect class="box b-violet" x="560" y="110" width="160" height="56" rx="4"/>
+  <text class="name violet center" x="640" y="133">controller</text>
+  <text class="note center" x="640" y="155">the issuer</text>
+  <rect class="box b-muted" x="800" y="110" width="160" height="56" rx="4"/>
+  <text class="name center" x="880" y="145">API server</text>
+
+  <path class="lifeline" d="M160 166V1130"/>
+  <path class="lifeline" d="M400 166V1130"/>
+  <path class="lifeline" d="M640 166V1130"/>
+  <path class="lifeline" d="M880 166V1130"/>
+
+  <rect class="frame b-teal" x="50" y="196" width="900" height="580" rx="10"/>
+  <rect class="bg" x="62" y="186" width="110" height="22"/>
+  <text class="name teal" x="70" y="203">first grant</text>
+
+  <path class="flow f-teal" d="M160 244H200V268H160" marker-end="url(#controller-grant-fetch-teal)"/>
+  <text class="msg" x="208" y="261">read projected token</text>
+
+  <path class="flow f-teal" d="M160 304H640" marker-end="url(#controller-grant-fetch-teal)"/>
+  <rect class="bg" x="300" y="282" width="200" height="20"/>
+  <text class="msg center" x="400" y="296">request grant with token</text>
+
+  <path class="flow f-violet" d="M640 356H880" marker-end="url(#controller-grant-fetch-violet)"/>
+  <text class="msg center" x="760" y="348">TokenReview</text>
+
+  <path class="flow f-muted reply" d="M880 408H640" marker-end="url(#controller-grant-fetch-muted)"/>
+  <text class="msg center" x="760" y="400">Pod name and UID</text>
+
+  <path class="flow f-violet" d="M640 460H680V484H640" marker-end="url(#controller-grant-fetch-violet)"/>
+  <text class="msg" x="688" y="477">find CapacityGrant, sign</text>
+
+  <path class="flow f-violet reply" d="M640 524H160" marker-end="url(#controller-grant-fetch-violet)"/>
+  <rect class="bg" x="330" y="502" width="140" height="20"/>
+  <text class="msg center" x="400" y="516">grant and expiry</text>
+
+  <path class="flow f-teal" d="M160 576H400" marker-end="url(#controller-grant-fetch-teal)"/>
+  <text class="msg center" x="280" y="568">deliver grant</text>
+
+  <path class="flow f-teal" d="M400 628H640" marker-end="url(#controller-grant-fetch-teal)"/>
+  <text class="msg center" x="520" y="620">fetch key set</text>
+
+  <path class="flow f-teal" d="M400 680H440V704H400" marker-end="url(#controller-grant-fetch-teal)"/>
+  <text class="msg" x="448" y="697">verify, warm zygote</text>
+
+  <path class="flow f-teal" d="M160 744H880" marker-end="url(#controller-grant-fetch-teal)"/>
+  <rect class="bg" x="440" y="722" width="160" height="20"/>
+  <text class="msg center" x="520" y="736">set zygote-ready</text>
+
+  <rect class="frame b-violet" x="50" y="806" width="900" height="150" rx="10"/>
+  <rect class="bg" x="62" y="796" width="150" height="22"/>
+  <text class="name violet" x="70" y="813">every half lease</text>
+
+  <path class="flow f-teal" d="M160 846H640" marker-end="url(#controller-grant-fetch-teal)"/>
+  <rect class="bg" x="360" y="824" width="80" height="20"/>
+  <text class="msg center" x="400" y="838">renew</text>
+  <path class="flow f-violet reply" d="M640 894H160" marker-end="url(#controller-grant-fetch-violet)"/>
+  <rect class="bg" x="350" y="872" width="100" height="20"/>
+  <text class="msg center" x="400" y="886">new expiry</text>
+  <path class="flow f-teal" d="M160 942H400" marker-end="url(#controller-grant-fetch-teal)"/>
+  <text class="msg center" x="280" y="934">deliver</text>
+
+  <rect class="frame b-muted" x="50" y="986" width="900" height="130" rx="10"/>
+  <rect class="bg" x="62" y="976" width="230" height="22"/>
+  <text class="name" x="70" y="993" style="fill:var(--muted)">while the controller is away</text>
+
+  <path class="flow f-teal" d="M160 1026H632"/>
+  <path class="flow f-muted" d="M632 1018L648 1034M648 1018L632 1034"/>
+  <rect class="bg" x="360" y="1004" width="80" height="20"/>
+  <text class="msg center" x="400" y="1018">renew</text>
+  <path class="flow f-teal" d="M160 1080H200V1104H160" marker-end="url(#controller-grant-fetch-teal)"/>
+  <text class="msg" x="208" y="1097">retry</text>
+  <rect class="bg" x="530" y="1082" width="220" height="20"/>
+  <text class="note center" x="640" y="1097">serves until the lease ends</text>
+</svg>

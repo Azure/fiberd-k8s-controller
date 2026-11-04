@@ -12,15 +12,15 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/yaml"
+
+	"github.com/Azure/fiberd/pkg/core"
+
+	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
 
 const crdPath = "../../config/crd/bases/fiberd.io_capacitygrants.yaml"
 
 const crdVersion = "v1alpha1"
-
-const digestPattern = `^sha256:[a-f0-9]{64}$`
-
-const thumbprintPattern = `^[A-Za-z0-9_-]{43}$`
 
 func ptr[T any](v T) *T { return &v }
 
@@ -138,27 +138,109 @@ func TestCapacityGrantSchema(t *testing.T) {
 	root := version.Schema.OpenAPIV3Schema
 
 	cases := []schemaCase{
-		{name: "grant requires spec", path: "", required: []string{"spec"}},
-		{name: "grant carries the name rule", path: "", rules: []string{nameRule}},
-		{name: "spec requires zygote fibers and podTemplate", path: "spec", required: []string{"zygote", "fibers", "podTemplate"}},
-		{name: "zygote requires digest and command", path: "spec.zygote", required: []string{"digest", "command"}},
-		{name: "zygote digest is a sha256 pattern", path: "spec.zygote.digest", pattern: digestPattern},
-		{name: "zygote command has at least one item", path: "spec.zygote.command", minItems: ptr(int64(1))},
-		{name: "zygote command is atomic", path: "spec.zygote.command", listType: "atomic"},
-		{name: "fibers requires max", path: "spec.fibers", required: []string{"max"}},
-		{name: "fibers carries the warm rule", path: "spec.fibers", rules: []string{warmRule}},
-		{name: "fibers max is at least one", path: "spec.fibers.max", minimum: ptr(float64(1))},
-		{name: "fibers warm is not negative", path: "spec.fibers.warm", minimum: ptr(float64(0))},
-		{name: "wBudget is an int or string quantity", path: "spec.wBudget", intOrString: true},
-		{name: "callerThumbprint is a base64url sha256", path: "spec.callerThumbprint", pattern: thumbprintPattern},
-		{name: "runtime is a known backend", path: "spec.runtime", enum: []string{"proc", "runc", "gvisor", "hyperlight"}},
-		{name: "runtime defaults to proc", path: "spec.runtime", defaultJSON: `"proc"`},
-		{name: "podTemplate has metadata and spec", path: "spec.podTemplate", properties: []string{"metadata", "spec"}},
-		{name: "podTemplate metadata keeps labels and annotations", path: "spec.podTemplate.metadata", properties: []string{"labels", "annotations"}},
-		{name: "podTemplate carries the controller's rules", path: "spec.podTemplate", rules: podTemplateRules, rulesNeedFieldPath: true},
-		{name: "podTemplate spec requires containers", path: "spec.podTemplate.spec", required: []string{"containers"}},
-		{name: "podTemplate container requires name", path: "spec.podTemplate.spec.containers.[]", required: []string{"name"}},
-		{name: "status conditions are a map keyed by type", path: "status.conditions", listType: "map", listMapKeys: []string{"type"}},
+		{
+			name:     "grant requires spec",
+			path:     "",
+			required: []string{"spec"},
+		},
+		{
+			name:  "grant carries the name rule",
+			path:  "",
+			rules: []string{nameRule},
+		},
+		{
+			name:     "spec requires zygote fibers and podTemplate",
+			path:     "spec",
+			required: []string{"zygote", "fibers", "podTemplate"},
+		},
+		{
+			name:     "zygote requires digest and command",
+			path:     "spec.zygote",
+			required: []string{"digest", "command"},
+		},
+		{name: "zygote digest is a sha256 pattern", path: "spec.zygote.digest", pattern: v1alpha1.DigestPattern},
+		{
+			name:     "zygote command has at least one item",
+			path:     "spec.zygote.command",
+			minItems: ptr(int64(1)),
+		},
+		{
+			name:     "zygote command is atomic",
+			path:     "spec.zygote.command",
+			listType: "atomic",
+		},
+		{
+			name:     "fibers requires max",
+			path:     "spec.fibers",
+			required: []string{"max"},
+		},
+		{
+			name:  "fibers carries the warm rule",
+			path:  "spec.fibers",
+			rules: []string{warmRule},
+		},
+		{
+			name:    "fibers max is at least one",
+			path:    "spec.fibers.max",
+			minimum: ptr(float64(1)),
+		},
+		{
+			name:    "fibers warm is not negative",
+			path:    "spec.fibers.warm",
+			minimum: ptr(float64(0)),
+		},
+		{
+			name:        "writeBudget is an int or string quantity",
+			path:        "spec.writeBudget",
+			intOrString: true,
+		},
+		{
+			name:    "callerThumbprint is a base64url sha256",
+			path:    "spec.callerThumbprint",
+			pattern: core.CallerThumbprintPattern,
+		},
+		{
+			name: "runtime is a known backend",
+			path: "spec.runtime",
+			enum: []string{"proc", "runc", "gvisor", "hyperlight"},
+		},
+		{
+			name:        "runtime defaults to proc",
+			path:        "spec.runtime",
+			defaultJSON: `"proc"`,
+		},
+		{
+			name:       "podTemplate has metadata and spec",
+			path:       "spec.podTemplate",
+			properties: []string{"metadata", "spec"},
+		},
+		{
+			name:       "podTemplate metadata keeps labels and annotations",
+			path:       "spec.podTemplate.metadata",
+			properties: []string{"labels", "annotations"},
+		},
+		{
+			name:               "podTemplate carries the controller's rules",
+			path:               "spec.podTemplate",
+			rules:              podTemplateRules,
+			rulesNeedFieldPath: true,
+		},
+		{
+			name:     "podTemplate spec requires containers",
+			path:     "spec.podTemplate.spec",
+			required: []string{"containers"},
+		},
+		{
+			name:     "podTemplate container requires name",
+			path:     "spec.podTemplate.spec.containers.[]",
+			required: []string{"name"},
+		},
+		{
+			name:        "status conditions are a map keyed by type",
+			path:        "status.conditions",
+			listType:    "map",
+			listMapKeys: []string{"type"},
+		},
 	}
 
 	for _, tc := range cases {
