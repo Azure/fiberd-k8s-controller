@@ -29,3 +29,32 @@ jobs:
             exit 1
           fi
       - run: make test
+
+  envtest:
+    name: envtest (Kubernetes ${{ matrix.k8s }}, non-root)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s: ["1.37.x", "1.30.x"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            hack/tools/go.sum
+      - name: Refuse to run as root
+        run: |
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "envtest must run as a normal user" >&2
+            exit 1
+          fi
+      - name: make test-envtest
+        env:
+          ENVTEST_K8S_VERSION: ${{ matrix.k8s }}
+        run: make test-envtest

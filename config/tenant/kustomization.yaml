@@ -1,0 +1,74 @@
+# Onboards one tenant namespace. The ClusterRoles it binds come from
+# config/rbac. A cluster admin writes one overlay per tenant like this.
+#
+#   # tenants/team-a/kustomization.yaml
+#   apiVersion: kustomize.config.k8s.io/v1beta1
+#   kind: Kustomization
+#   resources:
+#     - fiberd-tenant.yaml
+#   components:
+#     - ../../config/tenant
+#
+#   # tenants/team-a/fiberd-tenant.yaml
+#   apiVersion: v1
+#   kind: ConfigMap
+#   metadata:
+#     name: fiberd-tenant
+#     annotations:
+#       config.kubernetes.io/local-config: "true"
+#   data:
+#     namespace: team-a
+#     authorGroup: team-a-developers
+#
+# Fill in two values in the ConfigMap. namespace is the tenant namespace,
+# which must already exist. authorGroup is the group whose members may
+# write CapacityGrants there. The ConfigMap is local, so kustomize reads it and leaves it out of the
+# output. A component runs before its parent's own namespace setting,
+# which is why the namespace comes from the ConfigMap and not from a
+# namespace field in the overlay.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - service_account.yaml
+  - grant_role_binding.yaml
+  - controller_role_binding.yaml
+  - author_role_binding.yaml
+replacements:
+  # The tenant namespace goes on every object and on the fiberd-grant
+  # ServiceAccount subject. The controller's own subject keeps
+  # fiberd-system.
+  - source:
+      kind: ConfigMap
+      name: fiberd-tenant
+      fieldPath: data.namespace
+    targets:
+      - select:
+          kind: ServiceAccount
+          name: fiberd-grant
+        fieldPaths:
+          - metadata.namespace
+        options:
+          create: true
+      - select:
+          kind: RoleBinding
+        fieldPaths:
+          - metadata.namespace
+        options:
+          create: true
+      - select:
+          kind: RoleBinding
+          name: fiberd-grant
+        fieldPaths:
+          - subjects.[kind=ServiceAccount].namespace
+        options:
+          create: true
+  - source:
+      kind: ConfigMap
+      name: fiberd-tenant
+      fieldPath: data.authorGroup
+    targets:
+      - select:
+          kind: RoleBinding
+          name: fiberd-grant-author
+        fieldPaths:
+          - subjects.[kind=Group].name

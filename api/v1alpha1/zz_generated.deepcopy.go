@@ -73,8 +73,8 @@ func (in *CapacityGrantSpec) DeepCopyInto(out *CapacityGrantSpec) {
 	*out = *in
 	in.Zygote.DeepCopyInto(&out.Zygote)
 	out.Fibers = in.Fibers
-	if in.WBudget != nil {
-		in, out := &in.WBudget, &out.WBudget
+	if in.WriteBudget != nil {
+		in, out := &in.WriteBudget, &out.WriteBudget
 		x := (*in).DeepCopy()
 		*out = &x
 	}

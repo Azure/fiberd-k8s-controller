@@ -49,9 +49,9 @@ spec:
             description: spec is the desired state of the grant.
             properties:
               callerThumbprint:
-                description: callerThumbprint is the x5t#S256 thumbprint of the one
-                  client certificate allowed to present the grant. A home serving
-                  mutual TLS refuses a grant without it.
+                description: |-
+                  callerThumbprint is the x5t#S256 thumbprint of the one client certificate allowed to
+                  present the grant. A home serving mutual TLS refuses a grant without it.
                 pattern: ^[A-Za-z0-9_-]{43}$
                 type: string
               fibers:
@@ -64,9 +64,9 @@ spec:
                     minimum: 1
                     type: integer
                   warm:
-                    description: warm is how many sandboxes a gVisor home keeps restored
-                      ahead of clones. They count inside max, and other runtimes ignore
-                      it.
+                    description: |-
+                      warm is how many sandboxes a gVisor home keeps restored ahead of clones.
+                      They count inside max, and other runtimes ignore it.
                     format: int32
                     minimum: 0
                     type: integer
@@ -80,8 +80,6 @@ spec:
                 description: |-
                   podTemplate is the template of the grant Pod, written as in a Deployment.
                   It holds exactly one container named fiberd.
-                  The tenant owns that container's image, args, resources, resourceClaims and securityContext, and every scheduling field such as nodeSelector, affinity, tolerations, topologySpreadConstraints and imagePullSecrets.
-                  The controller sets the container command, appends its own flags after the tenant's args, and adds the probes, its volumes, the service account and the fiberd labels.
                   The validation rules list the fields a tenant may not set.
                 properties:
                   metadata:
@@ -8936,7 +8934,8 @@ spec:
                   rule: '!has(self.spec) || (self.spec.containers.size() == 1 && self.spec.containers[0].name
                     == ''fiberd'')'
                 - fieldPath: .spec.containers
-                  message: the fiberd container's command is set by the controller
+                  message: the fiberd container's command is the image entrypoint,
+                    which runs fiberd
                   reason: FieldValueForbidden
                   rule: '!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].command)'
                 - fieldPath: .spec.initContainers
@@ -8976,12 +8975,13 @@ spec:
                 - gvisor
                 - hyperlight
                 type: string
-              wBudget:
+              writeBudget:
                 anyOf:
                 - type: integer
                 - type: string
-                description: wBudget is the most memory one fiber may dirty, such
-                  as 512Mi. Unset means no per-fiber limit.
+                description: |-
+                  writeBudget is the most memory one fiber may dirty, such as 512Mi.
+                  Unset means no per-fiber limit.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
               zygote:
@@ -8989,18 +8989,18 @@ spec:
                   from.
                 properties:
                   command:
-                    description: command is the zygote program inside the fiberd container,
-                      path first then its arguments. The controller passes digest
-                      and command to fiberd as its template mapping.
+                    description: |-
+                      command is the zygote program inside the fiberd container, path first then its
+                      arguments. The controller passes digest and command to fiberd as its template mapping.
                     items:
                       type: string
                     minItems: 1
                     type: array
                     x-kubernetes-list-type: atomic
                   digest:
-                    description: digest names what every fiber is cloned from. fiberd
-                      refuses a grant whose digest it does not serve, and parked sessions
-                      resume only on a home with the same digest.
+                    description: |-
+                      digest names what every fiber is cloned from. fiberd refuses a grant whose digest it
+                      does not serve, and parked sessions resume only on a home with the same digest.
                     pattern: ^sha256:[a-f0-9]{64}$
                     type: string
                 required:

@@ -9,12 +9,15 @@ spec:
   fibers:
     max: 32
     warm: 4
-  wBudget: 64Mi
+  writeBudget: 64Mi
   runtime: proc
   podTemplate:
     spec:
       containers:
       - name: fiberd
+        # fiberd's image with the zygote program added. The controller sets
+        # no default.
+        image: registry.example/fiberd-refzygote:dev
         resources:
           limits:
             memory: 1Gi

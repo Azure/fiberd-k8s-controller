@@ -7,6 +7,10 @@ import (
 )
 
 // Runtime is the fiberd backend that runs the fibers of a grant.
+// The values are the names fiberd's -runtime flag takes.
+//
+// +enum
+// +kubebuilder:validation:Enum=proc;runc;gvisor;hyperlight
 type Runtime string
 
 const (
@@ -30,11 +34,13 @@ type CapacityGrantSpec struct {
 	// +required
 	Fibers FiberBudget `json:"fibers"`
 
-	// wBudget is the most memory one fiber may dirty, such as 512Mi. Unset means no per-fiber limit.
+	// writeBudget is the most memory one fiber may dirty, such as 512Mi.
+	// Unset means no per-fiber limit.
 	// +optional
-	WBudget *resource.Quantity `json:"wBudget,omitempty"`
+	WriteBudget *resource.Quantity `json:"writeBudget,omitempty"`
 
-	// callerThumbprint is the x5t#S256 thumbprint of the one client certificate allowed to present the grant. A home serving mutual TLS refuses a grant without it.
+	// callerThumbprint is the x5t#S256 thumbprint of the one client certificate allowed to
+	// present the grant. A home serving mutual TLS refuses a grant without it.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-]{43}$`
 	CallerThumbprint string `json:"callerThumbprint,omitempty"`
@@ -42,18 +48,15 @@ type CapacityGrantSpec struct {
 	// runtime is the fiberd backend that runs the fibers.
 	// +optional
 	// +kubebuilder:default="proc"
-	// +kubebuilder:validation:Enum=proc;runc;gvisor;hyperlight
 	Runtime Runtime `json:"runtime,omitempty"`
 
 	// podTemplate is the template of the grant Pod, written as in a Deployment.
 	// It holds exactly one container named fiberd.
-	// The tenant owns that container's image, args, resources, resourceClaims and securityContext, and every scheduling field such as nodeSelector, affinity, tolerations, topologySpreadConstraints and imagePullSecrets.
-	// The controller sets the container command, appends its own flags after the tenant's args, and adds the probes, its volumes, the service account and the fiberd labels.
 	// The validation rules list the fields a tenant may not set.
 	// +required
 	// +kubebuilder:validation:XValidation:rule="has(self.spec)",message="podTemplate.spec is required",fieldPath=".spec",reason="FieldValueRequired"
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || (self.spec.containers.size() == 1 && self.spec.containers[0].name == 'fiberd')",message="podTemplate.spec.containers must hold exactly one container named fiberd",fieldPath=".spec.containers",reason="FieldValueInvalid"
-	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].command)",message="the fiberd container's command is set by the controller",fieldPath=".spec.containers",reason="FieldValueForbidden"
+	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].command)",message="the fiberd container's command is the image entrypoint, which runs fiberd",fieldPath=".spec.containers",reason="FieldValueForbidden"
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || (!has(self.spec.initContainers) && !has(self.spec.ephemeralContainers))",message="podTemplate.spec.initContainers and ephemeralContainers are not allowed",fieldPath=".spec.initContainers",reason="FieldValueForbidden"
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || (!has(self.spec.serviceAccountName) && !has(self.spec.serviceAccount))",message="podTemplate.spec.serviceAccountName is set by the controller",fieldPath=".spec.serviceAccountName",reason="FieldValueForbidden"
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec) || !has(self.spec.nodeName)",message="podTemplate.spec.nodeName is not allowed, the scheduler places the Pod",fieldPath=".spec.nodeName",reason="FieldValueForbidden"
@@ -64,12 +67,14 @@ type CapacityGrantSpec struct {
 
 // ZygoteSpec names the zygote of a grant and how fiberd starts it.
 type ZygoteSpec struct {
-	// digest names what every fiber is cloned from. fiberd refuses a grant whose digest it does not serve, and parked sessions resume only on a home with the same digest.
+	// digest names what every fiber is cloned from. fiberd refuses a grant whose digest it
+	// does not serve, and parked sessions resume only on a home with the same digest.
 	// +required
 	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	Digest string `json:"digest"`
 
-	// command is the zygote program inside the fiberd container, path first then its arguments. The controller passes digest and command to fiberd as its template mapping.
+	// command is the zygote program inside the fiberd container, path first then its
+	// arguments. The controller passes digest and command to fiberd as its template mapping.
 	// +required
 	// +kubebuilder:validation:MinItems=1
 	// +listType=atomic
@@ -85,7 +90,8 @@ type FiberBudget struct {
 	// +kubebuilder:validation:Minimum=1
 	Max int32 `json:"max"`
 
-	// warm is how many sandboxes a gVisor home keeps restored ahead of clones. They count inside max, and other runtimes ignore it.
+	// warm is how many sandboxes a gVisor home keeps restored ahead of clones.
+	// They count inside max, and other runtimes ignore it.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	Warm int32 `json:"warm,omitempty"`

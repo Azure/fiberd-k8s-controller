@@ -1,7 +1,3 @@
-// Package v1alpha1 holds the fiberd.io API types.
-//
-// +kubebuilder:object:generate=true
-// +groupName=fiberd.io
 package v1alpha1
 
 import (
@@ -10,6 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+// GroupName is the API group of the types in this package.
 const GroupName = "fiberd.io"
 
 var (

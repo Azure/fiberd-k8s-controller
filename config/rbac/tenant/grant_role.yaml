@@ -1,0 +1,36 @@
+# What fiberd's Kubernetes home needs inside a grant Pod. It reads its own
+# Pod, writes the fiberd.io/zygote-ready condition, reads its namespace and
+# reads the ResourceClaims its Pod holds. config/tenant binds it to the
+# fiberd-grant ServiceAccount in each tenant namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fiberd-grant
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: grant
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - pods/status
+  verbs:
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+- apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceclaims
+  verbs:
+  - get

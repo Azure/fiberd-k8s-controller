@@ -1,0 +1,15 @@
+# Lets fiberd in each grant Pod read its Pod and report its zygote.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fiberd-grant
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: grant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fiberd-grant
+subjects:
+- kind: ServiceAccount
+  name: fiberd-grant

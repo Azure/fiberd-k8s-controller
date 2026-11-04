@@ -2,6 +2,9 @@ version: "2"
 
 run:
   timeout: 5m
+  # test/envtest builds only under this tag.
+  build-tags:
+    - envtest
 
 linters:
   default: standard
@@ -10,8 +13,17 @@ linters:
     - forbidigo
     - gocritic
     - misspell
+    - nakedret
+    - nilerr
+    - prealloc
+    - revive
     - unconvert
   settings:
+    # Listing rules turns on only the listed ones. exported fails lint on an
+    # exported identifier without a doc comment.
+    revive:
+      rules:
+        - name: exported
     # Engineering rule: a unit test starts no process. The exclusion below
     # confines this to _test.go files. Importing os/exec stays allowed, since
     # fakes may name *exec.Cmd without starting one.
@@ -43,6 +55,6 @@ formatters:
     goimports:
       local-prefixes:
         - github.com/Azure/fiberd-k8s-controller
-        - github.com/helayoty/fiberd
+        - github.com/Azure/fiberd
   exclusions:
     generated: lax

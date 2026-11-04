@@ -1,0 +1,16 @@
+# Keeps one replica through a voluntary disruption such as a node drain. A
+# replica counts once /readyz reports its caches synced.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fiberd-k8s-controller
+  namespace: fiberd-system
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: controller
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fiberd-k8s-controller
+      app.kubernetes.io/component: controller
