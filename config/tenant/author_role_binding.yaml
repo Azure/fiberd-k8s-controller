@@ -1,0 +1,17 @@
+# Lets the tenant's own group write CapacityGrants here. The subject name
+# comes from authorGroup in the fiberd-tenant ConfigMap.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fiberd-grant-author
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: grant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fiberd-grant-author
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: AUTHOR_GROUP

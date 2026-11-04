@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - manager.yaml
+  - pdb.yaml
+# Set the image with kustomize edit set image controller=<registry>/<name>:<tag>.
+images:
+  - name: controller
+    newName: controller
+    newTag: latest

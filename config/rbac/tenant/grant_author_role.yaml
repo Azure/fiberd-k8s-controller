@@ -1,0 +1,30 @@
+# What a tenant needs to write CapacityGrants in its namespace and read
+# what the controller reports. config/tenant binds it to a group the
+# cluster admin names.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fiberd-grant-author
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: grant
+rules:
+- apiGroups:
+  - fiberd.io
+  resources:
+  - capacitygrants
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fiberd.io
+  resources:
+  - capacitygrants/status
+  verbs:
+  - get

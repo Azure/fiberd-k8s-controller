@@ -1,0 +1,23 @@
+# Lets the controller create and patch the Service and Deployment of each
+# grant in this namespace. Without it the grant reports Forbidden.
+#
+# The bound role has no delete, even where OwnerReferencesPermissionEnforcement
+# is on. That plugin asks for delete only when a write changes the
+# ownerReferences of an object that already exists. The controller sets them
+# when it creates an object, never changes them on one it controls, and never
+# applies to a foreign one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fiberd-k8s-controller-tenant
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fiberd-k8s-controller-tenant
+subjects:
+- kind: ServiceAccount
+  name: fiberd-k8s-controller
+  namespace: fiberd-system
