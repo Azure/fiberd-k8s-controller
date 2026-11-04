@@ -22,7 +22,10 @@ var (
 
 // addKnownTypes registers the root types and the group's meta types.
 func addKnownTypes(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &CapacityGrant{}, &CapacityGrantList{})
+	s.AddKnownTypes(GroupVersion,
+		&CapacityGrant{}, &CapacityGrantList{},
+		&GrantPolicy{}, &GrantPolicyList{},
+	)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }

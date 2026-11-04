@@ -8,70 +8,52 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-// argPattern is the only shape a tenant arg may take. A flag and its value
-// are one item, so no tenant item can be read as the value of another.
-var argPattern = regexp.MustCompile(`^-{1,2}[a-z][a-z0-9-]*(=.*)?$`)
+// ArgPattern is the only shape a tenant arg may take. A flag and its value
+// are one item, so no tenant item can be read as the value of another. The
+// admission policy in config/policy repeats it, and a test keeps the two
+// equal.
+const ArgPattern = `^-{1,2}[a-z][a-z0-9-]*(=.*)?$`
 
-// ownedFiberdFlags are the fiberd flags the controller sets or that only
-// the controller may decide. admin-unsafe exists only in fiberd builds with
-// the fiberd_testhooks tag. -template is owned whole. A grant Pod runs the
-// grant's one zygote, and a tenant entry for another digest, or for the
-// default key, would run a command the grant never named.
-var ownedFiberdFlags = []string{
-	"admin-unsafe",
-	"all-caps",
-	"cgroup-root",
-	"client-ca",
-	"endpoint-family",
-	"endpoint-host",
-	"engine-uid",
-	"fiber-hide",
-	"grants-dir",
-	"gvisor-rootfs",
-	"handoff-key",
-	"handoff-listen",
-	"http",
-	"insecure-plaintext",
-	"issuer",
-	"jwks-max-stale",
-	"listen",
-	"max-lease",
-	"node-id",
-	"runc-rootfs",
-	"runtime",
-	"stale-ttl",
-	"state",
-	"template",
-	"tls-cert",
-	"tls-key",
-	"verifier",
+var argPattern = regexp.MustCompile(ArgPattern)
+
+// tenantFlags are the fiberd flags a tenant may pass in args. Every other
+// flag fiberd binds is the controller's, such as -issuer and -template, or
+// the operator's, such as -userns-pool and -audit-key, and a flag that
+// does not exist yet is nobody's until it is added here. The admission
+// policy in config/policy repeats the list, and a test keeps the two
+// equal and every entry a flag fiberd registers.
+var tenantFlags = map[string]bool{
+	// The repository the grant's zygote artifacts are pulled from.
+	"registry": true,
+	// Where the grant's parked sessions are published and claimed.
+	"delta-registry": true,
+	// The key that signs the grant's deltas, shared by the grant's Pods so
+	// one can claim what another parked.
+	"delta-key": true,
+	// The key that seals the grant's deltas and opens its sealed templates.
+	"delta-seal-key": true,
+	// Further keys whose deltas the grant's home imports.
+	"delta-trust": true,
+	// The devices the grant's engine may drive, which the container's
+	// resources put in the Pod.
+	"devices": true,
+	// The device engine is the tenant's own program, which fiberd runs as
+	// the engine uid with the engine capability set.
+	"engine": true,
+	// The engine's memory, carved from the container's limit.
+	"engine-memory-max": true,
+	// The block ceiling, within the container's memory limit.
+	"grant-ceiling": true,
+	// Trades RAM for disk on the tenant's own share of the node.
+	"gvisor-templates-on-disk": true,
+	// The guest the tenant's helper loads.
+	"hyperlight-guest": true,
+	// How strictly the grant's own parks must match the host.
+	"parity": true,
 }
 
-// binaryFlags are the flags the fiberd binary binds beside fiberd's
-// Config.Bind. -home selects the home, and the controller always sets it to
-// kubernetes. The Kubernetes home's flags carry the Pod's identity, which
-// the downward API sets. The controller owns all of them. A test in fiberd
-// core's cmd/fiberd checks that every flag the binary binds beyond
-// Config.Bind is in OwnedFlags, which keeps the two lists in step.
-var binaryFlags = []string{
-	"home",
-	"pod-name",
-	"pod-namespace",
-	"pod-uid",
-	"version",
-}
-
-// ownedFlags is every flag a tenant arg may not name.
-var ownedFlags = func() map[string]bool {
-	m := make(map[string]bool, len(ownedFiberdFlags)+len(binaryFlags))
-	for _, name := range slices.Concat(ownedFiberdFlags, binaryFlags) {
-		m[name] = true
-	}
-	return m
-}()
-
-// tenantBoolFlags are the boolean fiberd flags a tenant may set. Only these
-// may appear without "=value". Go's flag package reads the next item as the
+// tenantBoolFlags are the boolean flags among tenantFlags. Only these may
+// appear without "=value". Go's flag package reads the next item as the
 // value of any other flag written bare, which would swallow the
 // controller's first flag. A test keeps this list equal to what fiberd
 // registers.
@@ -79,19 +61,24 @@ var tenantBoolFlags = map[string]bool{
 	"gvisor-templates-on-disk": true,
 }
 
-// OwnedFlags returns, sorted, the flags a tenant may not pass in args.
-// That is fiberd's owned flags and the fiberd binary's own. Each call
-// returns a new slice.
-func OwnedFlags() []string {
-	out := make([]string, 0, len(ownedFlags))
-	for name := range ownedFlags {
+// TenantFlags returns, sorted, the flags a tenant may pass in args. Each
+// call returns a new slice.
+func TenantFlags() []string { return sortedNames(tenantFlags) }
+
+// TenantBoolFlags returns, sorted, the tenant flags that may be written
+// bare. Each call returns a new slice.
+func TenantBoolFlags() []string { return sortedNames(tenantBoolFlags) }
+
+func sortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
 		out = append(out, name)
 	}
 	slices.Sort(out)
 	return out
 }
 
-// CheckArgs refuses tenant args that name a flag the controller owns. Each
+// CheckArgs refuses tenant args that name a flag outside TenantFlags. Each
 // arg must be one flag in the one- or two-dash form with its value after
 // "=", such as -registry=example.com/zygotes. Only a boolean flag may omit
 // the value.
@@ -110,8 +97,8 @@ func checkArgs(fld *field.Path, args []string) field.ErrorList {
 		}
 		name, _, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		switch {
-		case ownedFlags[name]:
-			errs = append(errs, field.Forbidden(p, "-"+name+" is set by the controller"))
+		case !tenantFlags[name]:
+			errs = append(errs, field.Forbidden(p, "-"+name+" is not a flag a tenant may set"))
 		case !hasValue && !tenantBoolFlags[name]:
 			errs = append(errs, field.Invalid(p, arg, "must carry its value as -"+name+"=value"))
 		}

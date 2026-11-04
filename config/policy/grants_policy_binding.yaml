@@ -1,0 +1,17 @@
+# Deny when the parameter is missing, so no grant is admitted until a
+# GrantPolicy named default exists. Before Kubernetes 1.37 the binding sees
+# the parameter only through an informer. A grant applied moments after
+# default is created can be refused once and is accepted on retry.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fiberd-grants
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: admission
+spec:
+  policyName: fiberd-grants
+  validationActions: [Deny]
+  paramRef:
+    name: default
+    parameterNotFoundAction: Deny

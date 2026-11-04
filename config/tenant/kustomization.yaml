@@ -26,6 +26,16 @@
 # output. A component runs before its parent's own namespace setting,
 # which is why the namespace comes from the ConfigMap and not from a
 # namespace field in the overlay.
+#
+# A grant Pod needs SYS_ADMIN and SYS_PTRACE and runs with Unconfined
+# AppArmor and seccomp, which exceeds the baseline Pod Security level. A
+# namespace that hosts grant Pods therefore sets the label
+# pod-security.kubernetes.io/enforce=privileged. The fiberd-grants admission
+# policy is the guard there, which is why it fails closed. The label admits
+# any privileged Pod, so tenants who may create Pods directly should not
+# share a namespace with grant Pods. This component does not label the
+# namespace, since the namespace exists before onboarding and its labels are
+# the admin's.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:

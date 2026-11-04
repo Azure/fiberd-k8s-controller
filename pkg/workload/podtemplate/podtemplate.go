@@ -25,6 +25,7 @@ package podtemplate
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -71,6 +72,44 @@ const (
 	envPodUID       = "POD_UID"
 )
 
+// The variables a tenant may not set, grouped by why. A test keeps their
+// union equal to the policy's ownedEnv.
+var (
+	// identityEnv is the Pod identity the overlay adds. -node-id expands
+	// POD_NAME, so a tenant value would change fiberd's identity.
+	identityEnv = []string{envPodName, envPodNamespace, envPodUID}
+
+	// trustEnv is where Go reads its trust roots and proxies, so a tenant
+	// value would let the Pod believe a tenant's issuer.
+	trustEnv = []string{"SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
+
+	// loaderEnv is read by the Go runtime and the dynamic loader. GODEBUG can
+	// relax fiberd's TLS checks, and the loader variables load a tenant's
+	// library into fiberd.
+	loaderEnv = []string{"GODEBUG", "LD_PRELOAD", "LD_LIBRARY_PATH"}
+)
+
+// ownedVolumes are the overlay's volumes. A test keeps them equal to the
+// policy's ownedVolumes.
+var ownedVolumes = []string{stateVolume, grantsVolume}
+
+// reservedKeyPrefixes start the template label and annotation keys a tenant
+// may not set. fiberd.io keys are the controller's. The AppArmor and seccomp
+// annotations would conflict with the fields the controller sets. The rest
+// are honoured by node components and reach host networks, host devices or
+// the sandbox. A test keeps the list equal to the policy's.
+var reservedKeyPrefixes = []string{
+	"fiberd.io/",
+	"container.apparmor.security.beta.kubernetes.io/",
+	"seccomp.security.alpha.kubernetes.io/",
+	"container.seccomp.security.alpha.kubernetes.io/",
+	"k8s.v1.cni.cncf.io/",
+	"cni.projectcalico.org/",
+	"io.kubernetes.cri-o.",
+	"dev.gvisor.",
+	"io.katacontainers.",
+}
+
 // Build returns the pod template the controller applies for cg, with image
 // already resolved by the caller. It never changes cg. When the grant
 // cannot run, the error is a field error list that names every field at
@@ -95,6 +134,9 @@ func Build(cg *v1alpha1.CapacityGrant, image string, opts Options) (corev1.PodTe
 	tflag, tErrs := templateFlag(specPath.Child("zygote"), cg.Spec.Zygote)
 	errs = append(errs, tErrs...)
 	errs = append(errs, checkShape(podPath, &tmpl.Spec)...)
+	metaPath := specPath.Child("podTemplate", "metadata")
+	errs = append(errs, checkReservedKeys(metaPath.Child("labels"), tmpl.Labels)...)
+	errs = append(errs, checkReservedKeys(metaPath.Child("annotations"), tmpl.Annotations)...)
 	if len(errs) > 0 {
 		return corev1.PodTemplateSpec{}, errs.ToAggregate()
 	}
@@ -153,14 +195,40 @@ func checkRuntime(fld *field.Path, rt v1alpha1.Runtime) (v1alpha1.Runtime, field
 // checkShape repeats the CRD's validation rules on the pod spec. The API
 // server enforces them on admission. The builder checks them again so a
 // grant stored before a rule existed, or written past the rules, still
-// cannot reach the Pod. It also refuses Pod-level resources, which no CRD
-// rule covers.
+// cannot reach the Pod.
 func checkShape(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 	var errs field.ErrorList
 	if len(spec.Containers) != 1 || spec.Containers[0].Name != ContainerName {
 		errs = append(errs, field.Invalid(fld.Child("containers"), containerNames(spec.Containers), "must hold exactly one container named "+ContainerName))
-	} else if len(spec.Containers[0].Command) > 0 {
-		errs = append(errs, field.Forbidden(fld.Child("containers").Index(0).Child("command"), "the image entrypoint runs fiberd"))
+	} else {
+		// The CRD checks command and lifecycle apart, so a grant breaking
+		// both hears about both here too.
+		c := &spec.Containers[0]
+		cPath := fld.Child("containers").Index(0)
+		if len(c.Command) > 0 {
+			errs = append(errs, field.Forbidden(cPath.Child("command"), "the image entrypoint runs fiberd"))
+		}
+		if c.Lifecycle != nil {
+			errs = append(errs, field.Forbidden(cPath.Child("lifecycle"), "a hook would run a tenant command with fiberd's capabilities"))
+		}
+		if len(c.EnvFrom) > 0 {
+			errs = append(errs, field.Forbidden(cPath.Child("envFrom"), "a source could set SSL_CERT_FILE or a proxy variable and change which issuer fiberd trusts"))
+		}
+		if sc := c.SecurityContext; sc != nil {
+			errs = append(errs, checkUnconfined(cPath.Child("securityContext"), sc.SELinuxOptions != nil, sc.WindowsOptions != nil)...)
+		}
+	}
+	if sc := spec.SecurityContext; sc != nil {
+		errs = append(errs, checkUnconfined(fld.Child("securityContext"), sc.SELinuxOptions != nil, sc.WindowsOptions != nil)...)
+	}
+	if len(spec.HostAliases) > 0 {
+		errs = append(errs, field.Forbidden(fld.Child("hostAliases"), "fiberd resolves its issuer through the cluster DNS"))
+	}
+	if spec.DNSConfig != nil {
+		errs = append(errs, field.Forbidden(fld.Child("dnsConfig"), "fiberd resolves its issuer through the cluster DNS"))
+	}
+	if spec.RuntimeClassName != nil {
+		errs = append(errs, field.Forbidden(fld.Child("runtimeClassName"), "fiberd runs its own runtimes"))
 	}
 	if len(spec.InitContainers) > 0 {
 		errs = append(errs, field.Forbidden(fld.Child("initContainers"), "not allowed in a grant Pod"))
@@ -201,6 +269,21 @@ func checkShape(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 	return errs
 }
 
+// checkUnconfined refuses the SELinux and Windows options of the security
+// context at fld. The Pod and the container carry the same pair, and either
+// could lift fiberd out of the confinement the controller sets.
+func checkUnconfined(fld *field.Path, seLinux, windows bool) field.ErrorList {
+	const why = "would unconfine a container that holds SYS_ADMIN"
+	var errs field.ErrorList
+	if seLinux {
+		errs = append(errs, field.Forbidden(fld.Child("seLinuxOptions"), why))
+	}
+	if windows {
+		errs = append(errs, field.Forbidden(fld.Child("windowsOptions"), why))
+	}
+	return errs
+}
+
 // containerNames lists the names of cs, for an error message.
 func containerNames(cs []corev1.Container) []string {
 	names := make([]string, 0, len(cs))
@@ -210,15 +293,42 @@ func containerNames(cs []corev1.Container) []string {
 	return names
 }
 
-// checkEnv refuses tenant variables that would shadow the ones the
-// overlay adds. -node-id expands POD_NAME, so a tenant value would change
-// fiberd's identity.
+// checkEnv refuses tenant variables that would shadow the Pod identity,
+// change which issuer fiberd trusts, or reach into fiberd's process.
 func checkEnv(fld *field.Path, env []corev1.EnvVar) field.ErrorList {
 	var errs field.ErrorList
 	for i, e := range env {
-		switch e.Name {
-		case envPodName, envPodNamespace, envPodUID:
-			errs = append(errs, field.Forbidden(fld.Index(i).Child("name"), e.Name+" is set by the controller"))
+		if why := envRefusal(e.Name); why != "" {
+			errs = append(errs, field.Forbidden(fld.Index(i).Child("name"), e.Name+" "+why))
+		}
+	}
+	return errs
+}
+
+// envRefusal says why a tenant may not set the variable name, and is empty
+// for a variable it may set.
+func envRefusal(name string) string {
+	switch {
+	case slices.Contains(identityEnv, name):
+		return "is set by the controller"
+	case slices.Contains(trustEnv, name):
+		return "would change which issuer fiberd trusts"
+	case slices.Contains(loaderEnv, name):
+		return "would bend fiberd's TLS or run tenant code inside fiberd"
+	}
+	return ""
+}
+
+// checkReservedKeys refuses the tenant's template keys that a reserved
+// prefix starts or that sit under a fiberd.io subdomain. The keys are
+// sorted so the error reads the same on every reconcile.
+func checkReservedKeys(fld *field.Path, keys map[string]string) field.ErrorList {
+	var errs field.ErrorList
+	for _, k := range slices.Sorted(maps.Keys(keys)) {
+		reserved := strings.Contains(k, ".fiberd.io/") ||
+			slices.ContainsFunc(reservedKeyPrefixes, func(p string) bool { return strings.HasPrefix(k, p) })
+		if reserved {
+			errs = append(errs, field.Forbidden(fld.Key(k), "is reserved"))
 		}
 	}
 	return errs
@@ -239,9 +349,10 @@ func checkPorts(fld *field.Path, ports []corev1.ContainerPort) field.ErrorList {
 	return errs
 }
 
-// overlayMeta adds the grant labels and the hash annotation. They are set
-// after the tenant's, so a tenant value for one of these keys loses. Every
-// other tenant label and annotation stays.
+// overlayMeta adds the grant labels and the hash annotation. Build has
+// refused tenant fiberd.io keys, so only a tenant's managed-by label can
+// collide here, and the controller's value wins. Every other tenant label
+// and annotation stays.
 func overlayMeta(meta *metav1.ObjectMeta, cg *v1alpha1.CapacityGrant, grantHash string) {
 	if meta.Labels == nil {
 		meta.Labels = map[string]string{}
@@ -287,48 +398,110 @@ func podEnv() []corev1.EnvVar {
 }
 
 // checkVolumes refuses tenant volumes, mounts and devices that collide
-// with fiberd's state and grants volumes. A tenant mount of either volume
-// would expose fiberd's keys or grants elsewhere. A tenant mount at or
-// under either path would replace part of what fiberd keeps there.
+// with fiberd's state and grants volumes, or that replace the system trust
+// roots and resolver files. A tenant mount of either volume would expose
+// fiberd's keys or grants elsewhere. A tenant mount at or under either
+// path would replace part of what fiberd keeps there. The trust roots
+// decide which issuer fiberd believes and the resolver files where its
+// name points, and nothing of the controller's is mounted beneath them,
+// so a mount above them replaces them too. A projected token is minted for
+// the grant ServiceAccount, and fibers could read it at a tenant path.
 func checkVolumes(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 	var errs field.ErrorList
 	for i, v := range spec.Volumes {
+		vPath := fld.Child("volumes").Index(i)
 		if isOwnedVolume(v.Name) {
-			errs = append(errs, field.Duplicate(fld.Child("volumes").Index(i).Child("name"), v.Name))
+			errs = append(errs, field.Duplicate(vPath.Child("name"), v.Name))
+		}
+		if !allowedSource(&v.VolumeSource) {
+			errs = append(errs, field.Forbidden(vPath, "must be an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume"))
+		}
+		if v.Projected != nil && slices.ContainsFunc(v.Projected.Sources, projectsToken) {
+			errs = append(errs, field.Forbidden(vPath.Child("projected"), "must not project a service account token, which fibers could read"))
 		}
 	}
 	cPath := fld.Child("containers").Index(0)
 	c := &spec.Containers[0]
+	// The kubelet bind-mounts a node file at the termination message path.
+	if c.TerminationMessagePath != "" {
+		errs = append(errs, checkMountPath(cPath.Child("terminationMessagePath"), c.TerminationMessagePath)...)
+	}
 	for i, m := range c.VolumeMounts {
 		p := cPath.Child("volumeMounts").Index(i)
 		if isOwnedVolume(m.Name) {
 			errs = append(errs, field.Forbidden(p.Child("name"), m.Name+" is mounted by the controller"))
 		}
-		if dir, ok := ownedDir(m.MountPath); ok {
-			errs = append(errs, field.Forbidden(p.Child("mountPath"), "must not be at or under "+dir))
-		}
+		errs = append(errs, checkMountPath(p.Child("mountPath"), m.MountPath)...)
 	}
 	for i, d := range c.VolumeDevices {
 		p := cPath.Child("volumeDevices").Index(i)
 		if isOwnedVolume(d.Name) {
 			errs = append(errs, field.Forbidden(p.Child("name"), d.Name+" is mounted by the controller"))
 		}
-		if dir, ok := ownedDir(d.DevicePath); ok {
-			errs = append(errs, field.Forbidden(p.Child("devicePath"), "must not be at or under "+dir))
-		}
+		errs = append(errs, checkMountPath(p.Child("devicePath"), d.DevicePath)...)
+	}
+	return errs
+}
+
+// checkMountPath refuses a relative mount path, one at or under an overlay
+// directory, or one at, under or above a trust path. The later checks
+// compare absolute paths, so a relative one stops here.
+func checkMountPath(fld *field.Path, p string) field.ErrorList {
+	if !strings.HasPrefix(p, "/") {
+		return field.ErrorList{field.Invalid(fld, p, "must be an absolute path")}
+	}
+	var errs field.ErrorList
+	if dir, ok := ownedDir(p); ok {
+		errs = append(errs, field.Forbidden(fld, "must not be at or under "+dir))
+	}
+	if t, ok := trustPath(p); ok {
+		errs = append(errs, field.Forbidden(fld, "must not be at, under or above "+t+", which decides which issuer fiberd trusts"))
 	}
 	return errs
 }
 
 // isOwnedVolume reports whether name is one of the overlay's volumes.
-func isOwnedVolume(name string) bool { return name == stateVolume || name == grantsVolume }
+func isOwnedVolume(name string) bool { return slices.Contains(ownedVolumes, name) }
+
+// allowedSource reports whether s is a source the policy allows. Every
+// other source reaches the node or pulls with its credentials.
+func allowedSource(s *corev1.VolumeSource) bool {
+	return s.EmptyDir != nil || s.ConfigMap != nil || s.Secret != nil || s.DownwardAPI != nil ||
+		s.Projected != nil || s.PersistentVolumeClaim != nil || s.Ephemeral != nil
+}
+
+// projectsToken reports whether p is a service account token projection.
+func projectsToken(p corev1.VolumeProjection) bool { return p.ServiceAccountToken != nil }
+
+// ownedDirs are the directories the controller mounts under. That is
+// fiberd's state directory, the directories this and later changes mount
+// under /var/run/fiberd and /var/run/secrets/fiberd.io, and their /run
+// aliases, since /var/run is a symlink in fiberd's image. A test keeps
+// them equal to the policy's ownedDirs.
+var ownedDirs = []string{stateDir, "/var/run/fiberd", "/run/fiberd", "/var/run/secrets/fiberd.io", "/run/secrets/fiberd.io"}
 
 // ownedDir returns the overlay directory that p is at or under.
 func ownedDir(p string) (string, bool) {
 	p = path.Clean(p)
-	for _, dir := range []string{stateDir, grantsDir} {
+	for _, dir := range ownedDirs {
 		if p == dir || strings.HasPrefix(p, dir+"/") {
 			return dir, true
+		}
+	}
+	return "", false
+}
+
+// trustPaths hold the system trust roots Go scans beside SSL_CERT_FILE and
+// the files the resolver reads. A test keeps them equal to the policy's
+// trustPaths.
+var trustPaths = []string{"/etc/ssl", "/etc/pki", "/etc/hosts", "/etc/resolv.conf"}
+
+// trustPath returns the trust path that p is at, under or above.
+func trustPath(p string) (string, bool) {
+	p = path.Clean(p)
+	for _, t := range trustPaths {
+		if p == "/" || p == t || strings.HasPrefix(p, t+"/") || strings.HasPrefix(t, p+"/") {
+			return t, true
 		}
 	}
 	return "", false

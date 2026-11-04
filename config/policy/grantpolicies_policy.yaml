@@ -1,0 +1,24 @@
+# Deleting default would freeze every grant, including deletion through the
+# finalizer, because the fiberd-grants binding denies when its parameter is
+# missing. A cluster admin who really must remove default deletes the
+# fiberd-grantpolicies binding first.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fiberd-grantpolicies
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: admission
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["fiberd.io"]
+        apiVersions: ["*"]
+        operations: ["DELETE"]
+        resources: ["grantpolicies"]
+  validations:
+    # On DELETE object is null and oldObject is the object being deleted.
+    - expression: "oldObject.metadata.name != 'default'"
+      reason: Forbidden
+      message: "the GrantPolicy named default is read by the fiberd-grants binding, update it instead of deleting it"

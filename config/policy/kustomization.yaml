@@ -1,0 +1,9 @@
+# The admission policies for CapacityGrants. The install ships no
+# GrantPolicy, the README's Install section says when the admin creates it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - grants_policy.yaml
+  - grants_policy_binding.yaml
+  - grantpolicies_policy.yaml
+  - grantpolicies_policy_binding.yaml

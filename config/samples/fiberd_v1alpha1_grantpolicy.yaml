@@ -1,0 +1,15 @@
+# Only the GrantPolicy named default is read. Each images entry is a
+# repository and matches images under it with any tag. The gvisor
+# repository is listed for the day gvisor joins runtimes. privilegedNamespaces
+# is empty on purpose, so no grant may run a privileged fiberd container
+# until an admin names its namespace.
+apiVersion: fiberd.io/v1alpha1
+kind: GrantPolicy
+metadata:
+  name: default
+spec:
+  images:
+    - ghcr.io/azure/fiberd
+    - ghcr.io/azure/fiberd-runc
+    - ghcr.io/azure/fiberd-gvisor
+  runtimes: [proc, runc]

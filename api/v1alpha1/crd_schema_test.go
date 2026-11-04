@@ -18,38 +18,51 @@ import (
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
 
-const crdPath = "../../config/crd/bases/fiberd.io_capacitygrants.yaml"
+const (
+	crdPath            = "../../config/crd/bases/fiberd.io_capacitygrants.yaml"
+	grantPolicyCRDPath = "../../config/crd/bases/fiberd.io_grantpolicies.yaml"
+)
 
 const crdVersion = "v1alpha1"
 
 func ptr[T any](v T) *T { return &v }
 
-func loadCRD(t *testing.T) *apiextensionsv1.CustomResourceDefinition {
+func loadCRD(t *testing.T, path string) *apiextensionsv1.CustomResourceDefinition {
 	t.Helper()
-	raw, err := os.ReadFile(crdPath)
+	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("%s is missing, run `make manifests` and commit the result", crdPath)
+		t.Fatalf("%s is missing, run `make manifests` and commit the result", path)
 	}
 	if err != nil {
-		t.Fatalf("read %s: %v", crdPath, err)
+		t.Fatalf("read %s: %v", path, err)
 	}
 	var crd apiextensionsv1.CustomResourceDefinition
 	if err := yaml.Unmarshal(raw, &crd); err != nil {
-		t.Fatalf("parse %s: %v", crdPath, err)
+		t.Fatalf("parse %s: %v", path, err)
 	}
 	return &crd
 }
 
-func loadVersion(t *testing.T) (*apiextensionsv1.CustomResourceDefinition, *apiextensionsv1.CustomResourceDefinitionVersion) {
+func loadVersion(t *testing.T, path string) (*apiextensionsv1.CustomResourceDefinition, *apiextensionsv1.CustomResourceDefinitionVersion) {
 	t.Helper()
-	crd := loadCRD(t)
+	crd := loadCRD(t, path)
 	for i := range crd.Spec.Versions {
 		if crd.Spec.Versions[i].Name == crdVersion {
 			return crd, &crd.Spec.Versions[i]
 		}
 	}
-	t.Fatalf("%s has no version %s", crdPath, crdVersion)
+	t.Fatalf("%s has no version %s", path, crdVersion)
 	return nil, nil
+}
+
+// loadSchema returns the openAPIV3Schema of version crdVersion of the CRD at path.
+func loadSchema(t *testing.T, path string) *apiextensionsv1.JSONSchemaProps {
+	t.Helper()
+	_, version := loadVersion(t, path)
+	if version.Schema == nil || version.Schema.OpenAPIV3Schema == nil {
+		t.Fatalf("version %s of %s has no openAPIV3Schema", crdVersion, path)
+	}
+	return version.Schema.OpenAPIV3Schema
 }
 
 // schemaAt walks properties from the root of the schema. The segment "[]"
@@ -99,6 +112,8 @@ type schemaCase struct {
 	enum        []string
 	minimum     *float64
 	minItems    *int64
+	maxItems    *int64
+	maxLength   *int64
 	pattern     string
 	required    []string
 	defaultJSON string
@@ -122,6 +137,13 @@ var podTemplateRules = []string{
 	"!has(self.spec) || !has(self.spec.nodeName)",
 	"!has(self.spec) || !has(self.spec.restartPolicy) || self.spec.restartPolicy == 'Always'",
 	"!has(self.spec) || ((!has(self.spec.hostPID) || !self.spec.hostPID) && (!has(self.spec.hostNetwork) || !self.spec.hostNetwork) && (!has(self.spec.hostIPC) || !self.spec.hostIPC) && (!has(self.spec.shareProcessNamespace) || !self.spec.shareProcessNamespace) && !has(self.spec.hostUsers))",
+	"!has(self.spec) || self.spec.containers.size() == 0 || (!has(self.spec.containers[0].startupProbe) && !has(self.spec.containers[0].readinessProbe) && !has(self.spec.containers[0].livenessProbe))",
+	"!has(self.spec) || !has(self.spec.resources)",
+	"!has(self.spec) || self.spec.containers.size() == 0 || (has(self.spec.containers[0].resources) && has(self.spec.containers[0].resources.limits) && 'memory' in self.spec.containers[0].resources.limits)",
+	"!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].lifecycle)",
+	"!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].envFrom)",
+	"!has(self.spec) || (!has(self.spec.hostAliases) && !has(self.spec.dnsConfig) && !has(self.spec.runtimeClassName))",
+	"!has(self.spec) || ((!has(self.spec.securityContext) || (!has(self.spec.securityContext.seLinuxOptions) && !has(self.spec.securityContext.windowsOptions))) && (self.spec.containers.size() == 0 || !has(self.spec.containers[0].securityContext) || (!has(self.spec.containers[0].securityContext.seLinuxOptions) && !has(self.spec.containers[0].securityContext.windowsOptions))))",
 }
 
 // warmRule is the CEL rule on spec.fibers.
@@ -130,14 +152,11 @@ const warmRule = "!has(self.warm) || self.warm <= self.max"
 // nameRule is the CEL rule on the root of the grant.
 const nameRule = "self.metadata.name.size() <= 56"
 
-func TestCapacityGrantSchema(t *testing.T) {
-	_, version := loadVersion(t)
-	if version.Schema == nil || version.Schema.OpenAPIV3Schema == nil {
-		t.Fatalf("version %s of %s has no openAPIV3Schema", crdVersion, crdPath)
-	}
-	root := version.Schema.OpenAPIV3Schema
+// grantPolicyNameRule is the CEL rule on the root of a GrantPolicy.
+const grantPolicyNameRule = "self.metadata.name == 'default'"
 
-	cases := []schemaCase{
+func TestCapacityGrantSchema(t *testing.T) {
+	runSchemaCases(t, loadSchema(t, crdPath), []schemaCase{
 		{
 			name:     "grant requires spec",
 			path:     "",
@@ -241,8 +260,77 @@ func TestCapacityGrantSchema(t *testing.T) {
 			listType:    "map",
 			listMapKeys: []string{"type"},
 		},
-	}
+	})
+}
 
+func TestGrantPolicySchema(t *testing.T) {
+	runSchemaCases(t, loadSchema(t, grantPolicyCRDPath), []schemaCase{
+		{
+			name:     "policy requires spec",
+			path:     "",
+			required: []string{"spec"},
+		},
+		{
+			name:  "policy carries the name rule",
+			path:  "",
+			rules: []string{grantPolicyNameRule},
+		},
+		{
+			name:     "spec requires images",
+			path:     "spec",
+			required: []string{"images"},
+		},
+		{
+			name:     "images is a set",
+			path:     "spec.images",
+			listType: "set",
+		},
+		{
+			name:     "images has between one and 64 items",
+			path:     "spec.images",
+			minItems: ptr(int64(1)),
+			maxItems: ptr(int64(64)),
+		},
+		{
+			name:      "images items are repositories",
+			path:      "spec.images.[]",
+			pattern:   v1alpha1.ImageRepositoryPattern,
+			maxLength: ptr(int64(255)),
+		},
+		{
+			name:     "privilegedNamespaces is a set",
+			path:     "spec.privilegedNamespaces",
+			listType: "set",
+			maxItems: ptr(int64(256)),
+		},
+		{
+			name:      "privilegedNamespaces items are DNS labels",
+			path:      "spec.privilegedNamespaces.[]",
+			pattern:   "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+			maxLength: ptr(int64(63)),
+		},
+		{
+			name:     "runtimes is a set",
+			path:     "spec.runtimes",
+			listType: "set",
+			minItems: ptr(int64(1)),
+			maxItems: ptr(int64(4)),
+		},
+		{
+			name:        "runtimes defaults to proc and runc",
+			path:        "spec.runtimes",
+			defaultJSON: `["proc","runc"]`,
+		},
+		{
+			name: "runtimes items are known backends",
+			path: "spec.runtimes.[]",
+			enum: []string{"proc", "runc", "gvisor", "hyperlight"},
+		},
+	})
+}
+
+func runSchemaCases(t *testing.T, root *apiextensionsv1.JSONSchemaProps, cases []schemaCase) {
+	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := schemaAt(root, tc.path)
@@ -266,6 +354,18 @@ func TestCapacityGrantSchema(t *testing.T) {
 				asserted++
 				if got.MinItems == nil || *got.MinItems != *tc.minItems {
 					t.Errorf("minItems = %v, want %v", got.MinItems, *tc.minItems)
+				}
+			}
+			if tc.maxItems != nil {
+				asserted++
+				if got.MaxItems == nil || *got.MaxItems != *tc.maxItems {
+					t.Errorf("maxItems = %v, want %v", got.MaxItems, *tc.maxItems)
+				}
+			}
+			if tc.maxLength != nil {
+				asserted++
+				if got.MaxLength == nil || *got.MaxLength != *tc.maxLength {
+					t.Errorf("maxLength = %v, want %v", got.MaxLength, *tc.maxLength)
 				}
 			}
 			if tc.pattern != "" {
@@ -350,14 +450,27 @@ func columnNames(v *apiextensionsv1.CustomResourceDefinitionVersion) []string {
 	return names
 }
 
-func TestCapacityGrantCRDMetadata(t *testing.T) {
-	crd, version := loadVersion(t)
+type metadataCase struct {
+	name string
+	got  any
+	want any
+}
 
-	cases := []struct {
-		name string
-		got  any
-		want any
-	}{
+func runMetadataCases(t *testing.T, cases []metadataCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !reflect.DeepEqual(tc.got, tc.want) {
+				t.Errorf("got %v, want %v", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCapacityGrantCRDMetadata(t *testing.T) {
+	crd, version := loadVersion(t, crdPath)
+
+	runMetadataCases(t, []metadataCase{
 		{name: "group", got: crd.Spec.Group, want: "fiberd.io"},
 		{name: "kind", got: crd.Spec.Names.Kind, want: "CapacityGrant"},
 		{name: "plural", got: crd.Spec.Names.Plural, want: "capacitygrants"},
@@ -368,13 +481,19 @@ func TestCapacityGrantCRDMetadata(t *testing.T) {
 		{name: "status subresource", got: version.Subresources != nil && version.Subresources.Status != nil, want: true},
 		{name: "printer columns", got: columnNames(version), want: []string{"Ready", "Age"}},
 		{name: "ready column path", got: columnPath(version, "Ready"), want: `.status.conditions[?(@.type=="Ready")].status`},
-	}
+	})
+}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if !reflect.DeepEqual(tc.got, tc.want) {
-				t.Errorf("got %v, want %v", tc.got, tc.want)
-			}
-		})
-	}
+func TestGrantPolicyCRDMetadata(t *testing.T) {
+	crd, version := loadVersion(t, grantPolicyCRDPath)
+
+	runMetadataCases(t, []metadataCase{
+		{name: "group", got: crd.Spec.Group, want: "fiberd.io"},
+		{name: "kind", got: crd.Spec.Names.Kind, want: "GrantPolicy"},
+		{name: "plural", got: crd.Spec.Names.Plural, want: "grantpolicies"},
+		{name: "scope", got: string(crd.Spec.Scope), want: "Cluster"},
+		{name: "served", got: version.Served, want: true},
+		{name: "storage", got: version.Storage, want: true},
+		{name: "no status subresource", got: version.Subresources != nil && version.Subresources.Status != nil, want: false},
+	})
 }

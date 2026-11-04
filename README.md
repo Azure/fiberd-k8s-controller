@@ -7,4 +7,15 @@ This controller lets a tenant ask for that capacity with a `CapacityGrant` objec
 A grant Pod is an ordinary Kubernetes Pod that runs fiberd for exactly one grant.
 The [design](./docs/design/controller.md) explains how the pieces fit.
 
+## Install
+
+1. Apply the install with `kubectl apply -k config/default`. Every object in it is a built-in kind or a CRD, so one apply is enough.
+2. Edit the images in `config/samples/fiberd_v1alpha1_grantpolicy.yaml`, then create the GrantPolicy named default with `kubectl apply -f config/samples/fiberd_v1alpha1_grantpolicy.yaml`.
+3. Onboard each tenant namespace with the `config/tenant` component, as its [comment](./config/tenant/kustomization.yaml) shows.
+
+The GrantPolicy comes before the first tenant because the admission policy fails closed. Until a GrantPolicy named default exists, every create and update of a CapacityGrant is refused.
+On an upgrade from a version without the policy, create default right after the apply. Until it exists, existing grants accept no update, finalizer removal included.
+
+A CapacityGrant's args may name only the fiberd flags a tenant sets. [`pkg/workload/podtemplate/args.go`](./pkg/workload/podtemplate/args.go) lists them with the reason for each, and the admission policy refuses the rest.
+
 The project is under construction. The controller does not serve grants yet. The work is tracked in the issues of this repository.

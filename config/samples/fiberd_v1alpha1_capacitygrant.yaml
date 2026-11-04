@@ -15,9 +15,11 @@ spec:
     spec:
       containers:
       - name: fiberd
-        # fiberd's image with the zygote program added. The controller sets
-        # no default.
-        image: registry.example/fiberd-refzygote:dev
+        # A placeholder for the tenant's image, fiberd's image with the
+        # zygote program added. The controller sets no default. The
+        # admission policy requires a digest and a repository the GrantPolicy
+        # named default lists.
+        image: ghcr.io/azure/fiberd:0.4.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         resources:
           limits:
             memory: 1Gi
