@@ -90,10 +90,10 @@ spec:
     # them as surely as a mount at them.
     - name: trustPaths
       expression: "['/etc/ssl', '/etc/pki', '/etc/hosts', '/etc/resolv.conf']"
-    # A mount naming an overlay volume would expose fiberd's keys or grants
-    # at a path fibers can see.
+    # A mount naming an overlay volume would expose fiberd's keys, grants or
+    # certificate at a path fibers can see.
     - name: ownedVolumes
-      expression: "['fiberd-state', 'fiberd-grants']"
+      expression: "['fiberd-state', 'fiberd-grants', 'fiberd-tls']"
     - name: volumeNames
       expression: |-
         variables.volumes.map(v, v.name)
@@ -165,7 +165,7 @@ spec:
       reason: Forbidden
     - expression: "!variables.volumeNames.exists(n, n in variables.ownedVolumes)"
       messageExpression: "'volume ' + variables.volumeNames.filter(n, n in variables.ownedVolumes)[0] + ' is mounted by the controller'"
-      message: "the volumes fiberd-state and fiberd-grants are mounted by the controller"
+      message: "the volumes fiberd-state, fiberd-grants and fiberd-tls are mounted by the controller"
       reason: Forbidden
     # Unclean or relative paths would slip past the owned directory check.
     - expression: "!variables.mountPaths.exists(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..'))"

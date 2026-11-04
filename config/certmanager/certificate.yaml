@@ -1,0 +1,27 @@
+# A short life and a fresh key at each renewal bound how long a leaked
+# serving key stays useful. The controller reloads the pair when it changes.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fiberd-k8s-controller-tls
+  namespace: fiberd-system
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: controller
+spec:
+  secretName: fiberd-k8s-controller-tls
+  duration: 24h
+  renewBefore: 8h
+  dnsNames:
+  - fiberd-k8s-controller.fiberd-system.svc
+  - fiberd-k8s-controller.fiberd-system.svc.cluster.local
+  usages:
+  - server auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: fiberd-ca
+    kind: ClusterIssuer
+    group: cert-manager.io

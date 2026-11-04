@@ -1,0 +1,8 @@
+# The CA sits in cert-manager, the namespace a ClusterIssuer reads its
+# Secret from. The controller and every grant Pod chain to it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - issuer.yaml
+  - ca_certificate.yaml
+  - cluster_issuer.yaml

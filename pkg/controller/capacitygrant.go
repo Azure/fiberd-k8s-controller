@@ -194,7 +194,7 @@ func (r *CapacityGrantReconciler) buildTemplate(cg *v1alpha1.CapacityGrant, now 
 	var tmpl corev1.PodTemplateSpec
 	if image != "" {
 		var err error
-		if tmpl, err = podtemplate.Build(cg, image, r.Template); err != nil {
+		if tmpl, err = podtemplate.Build(cg, image, workload.ObjectName(cg), r.Template); err != nil {
 			errs = append(errs, err)
 		}
 	}

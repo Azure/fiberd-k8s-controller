@@ -1,9 +1,12 @@
-# The whole controller install. Every namespaced object already names
-# fiberd-system, so no namespace or name prefix is set here.
+# The whole controller install. Every namespaced object already names its
+# namespace, so no namespace or name prefix is set here. cert-manager must
+# be installed first.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../crd
   - ../rbac
+  - ../certs
+  - ../certmanager
   - ../manager
   - ../policy

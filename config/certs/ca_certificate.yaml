@@ -1,0 +1,26 @@
+# Ten years, since every grant Pod reads the root once at start and a CA
+# rotation needs a rollout.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fiberd-ca
+  namespace: cert-manager
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: ca
+spec:
+  secretName: fiberd-ca
+  duration: 87600h
+  isCA: true
+  commonName: fiberd-ca
+  # cert-manager rotates the key at each renewal by default. A new CA
+  # key would cut off every running grant Pod, which reads the root once
+  # at start.
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Never
+  issuerRef:
+    name: fiberd-selfsigned
+    kind: Issuer
+    group: cert-manager.io

@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - manager.yaml
+  - service.yaml
   - pdb.yaml
 # Set the image with kustomize edit set image controller=<registry>/<name>:<tag>.
 images:

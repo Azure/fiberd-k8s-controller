@@ -15,7 +15,20 @@ import (
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
 )
 
-const testIssuer = "https://fiberd-k8s-controller.fiberd-system.svc:8443"
+const (
+	testIssuer   = "https://fiberd-k8s-controller.fiberd-system.svc:8443"
+	testCertFile = "/var/run/fiberd/tls/tls.crt"
+	testKeyFile  = "/var/run/fiberd/tls/tls.key"
+)
+
+// withRequired prepends the flags that have no default to args.
+func withRequired(args ...string) []string {
+	return append([]string{
+		"--issuer-url=" + testIssuer,
+		"--tls-cert-file=" + testCertFile,
+		"--tls-private-key-file=" + testKeyFile,
+	}, args...)
+}
 
 // quantityEqual compares quantities by value, since 0.5 and 500m are the
 // same CPU.
@@ -31,7 +44,7 @@ func parse(args []string) (*Options, error) {
 	return o, err
 }
 
-// defaults is what the flags give with only the issuer URL set and
+// defaults is what the flags give with only withRequired's flags set and
 // $POD_NAMESPACE set to ns.
 func defaults(ns string) Options {
 	return Options{
@@ -47,7 +60,20 @@ func defaults(ns string) Options {
 		Namespace:   ns,
 		LeaderElect: true,
 		ProbeAddr:   ":8081",
+		IssuerAddr:  ":8443",
+		TLSCertFile: testCertFile,
+		TLSKeyFile:  testKeyFile,
 	}
+}
+
+// unset is defaults(ns) with the flags that have no default left empty, as
+// NewOptions returns it.
+func unset(ns string) Options {
+	o := defaults(ns)
+	o.Template.IssuerURL = ""
+	o.TLSCertFile = ""
+	o.TLSKeyFile = ""
+	return o
 }
 
 func TestAddFlags(t *testing.T) {
@@ -61,18 +87,18 @@ func TestAddFlags(t *testing.T) {
 		{
 			name:         "defaults take the namespace from POD_NAMESPACE",
 			podNamespace: "fiberd-system",
-			args:         []string{"--issuer-url=" + testIssuer},
+			args:         withRequired(),
 			want:         func() Options { return defaults("fiberd-system") },
 		},
 		{
 			name: "no POD_NAMESPACE leaves the namespace empty",
-			args: []string{"--issuer-url=" + testIssuer},
+			args: withRequired(),
 			want: func() Options { return defaults("") },
 		},
 		{
 			name:         "the namespace flag wins over POD_NAMESPACE",
 			podNamespace: "fiberd-system",
-			args:         []string{"--issuer-url=" + testIssuer, "--namespace=controllers"},
+			args:         withRequired("--namespace=controllers"),
 			want:         func() Options { return defaults("controllers") },
 		},
 		{
@@ -88,6 +114,9 @@ func TestAddFlags(t *testing.T) {
 				"--namespace=controllers",
 				"--leader-elect=false",
 				"--health-probe-bind-address=127.0.0.1:9440",
+				"--issuer-bind-address=127.0.0.1:9443",
+				"--tls-cert-file=/etc/fiberd/serving.crt",
+				"--tls-private-key-file=/etc/fiberd/serving.key",
 			},
 			want: func() Options {
 				return Options{
@@ -99,14 +128,17 @@ func TestAddFlags(t *testing.T) {
 						DefaultCPU:     resource.MustParse("2"),
 						ServiceAccount: "grant-pods",
 					},
-					Namespace: "controllers",
-					ProbeAddr: "127.0.0.1:9440",
+					Namespace:   "controllers",
+					ProbeAddr:   "127.0.0.1:9440",
+					IssuerAddr:  "127.0.0.1:9443",
+					TLSCertFile: "/etc/fiberd/serving.crt",
+					TLSKeyFile:  "/etc/fiberd/serving.key",
 				}
 			},
 		},
 		{
 			name: "the endpoint family is read as fiberd reads it",
-			args: []string{"--issuer-url=" + testIssuer, "--endpoint-family=UNIX"},
+			args: withRequired("--endpoint-family=UNIX"),
 			want: func() Options {
 				o := defaults("")
 				o.Template.EndpointFamily = endpoint.Unix
@@ -173,19 +205,11 @@ func TestNewOptions(t *testing.T) {
 		{
 			name:         "POD_NAMESPACE gives the namespace",
 			podNamespace: "fiberd-system",
-			want: func() Options {
-				o := defaults("fiberd-system")
-				o.Template.IssuerURL = ""
-				return o
-			},
+			want:         func() Options { return unset("fiberd-system") },
 		},
 		{
 			name: "no POD_NAMESPACE leaves the namespace empty",
-			want: func() Options {
-				o := defaults("")
-				o.Template.IssuerURL = ""
-				return o
-			},
+			want: func() Options { return unset("") },
 		},
 	}
 	for _, tc := range cases {
@@ -203,6 +227,8 @@ func TestValidate(t *testing.T) {
 		name    string
 		mutate  func(*Options)
 		wantErr []string
+		// wantAbsent holds text the error must not contain.
+		wantAbsent []string
 	}{
 		{
 			name:   "the defaults with an issuer and a namespace are valid",
@@ -211,6 +237,15 @@ func TestValidate(t *testing.T) {
 		{
 			name:   "an IPv6 probe address is valid",
 			mutate: func(o *Options) { o.ProbeAddr = "[::1]:8081" },
+		},
+		{
+			name: "every issuer flag set is valid",
+			mutate: func(o *Options) {
+				o.Template.IssuerURL = "https://issuer.example.com"
+				o.IssuerAddr = "[::1]:9443"
+				o.TLSCertFile = "/etc/fiberd/serving.crt"
+				o.TLSKeyFile = "/etc/fiberd/serving.key"
+			},
 		},
 		{
 			name:    "no issuer URL",
@@ -235,7 +270,7 @@ func TestValidate(t *testing.T) {
 		{
 			name:    "a probe port out of range",
 			mutate:  func(o *Options) { o.ProbeAddr = ":70000" },
-			wantErr: []string{"not a number from 0 to 65535"},
+			wantErr: []string{"--health-probe-bind-address", "not a number from 0 to 65535"},
 		},
 		{
 			name:    "an empty probe address",
@@ -258,13 +293,77 @@ func TestValidate(t *testing.T) {
 			wantErr: []string{"default CPU must be positive"},
 		},
 		{
+			name:    "no certificate file",
+			mutate:  func(o *Options) { o.TLSCertFile = "" },
+			wantErr: []string{"--tls-cert-file is required"},
+		},
+		{
+			name:    "no key file",
+			mutate:  func(o *Options) { o.TLSKeyFile = "" },
+			wantErr: []string{"--tls-private-key-file is required"},
+		},
+		{
+			name:    "an issuer address without a port",
+			mutate:  func(o *Options) { o.IssuerAddr = "8443" },
+			wantErr: []string{"--issuer-bind-address"},
+		},
+		{
+			name:    "an issuer port out of range",
+			mutate:  func(o *Options) { o.IssuerAddr = ":70000" },
+			wantErr: []string{"--issuer-bind-address", "not a number from 0 to 65535"},
+		},
+		{
+			name:    "an empty issuer address",
+			mutate:  func(o *Options) { o.IssuerAddr = "" },
+			wantErr: []string{"--issuer-bind-address"},
+		},
+		{
+			name:    "an http issuer URL",
+			mutate:  func(o *Options) { o.Template.IssuerURL = "http://fiberd-k8s-controller.fiberd-system.svc:8443" },
+			wantErr: []string{"must use https"},
+		},
+		{
+			name:    "an issuer URL with a path",
+			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "/issuer" },
+			wantErr: []string{"must have no path, query or fragment"},
+		},
+		{
+			name:    "an issuer URL with a trailing slash",
+			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "/" },
+			wantErr: []string{"must have no path, query or fragment"},
+		},
+		{
+			name:    "an issuer URL with a query",
+			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "?tenant=a" },
+			wantErr: []string{"must have no path, query or fragment"},
+		},
+		{
+			name:    "an issuer URL with a fragment",
+			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "#a" },
+			wantErr: []string{"must have no path, query or fragment"},
+		},
+		{
+			name:    "an issuer URL with a bare question mark",
+			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "?" },
+			wantErr: []string{"must have no path, query or fragment"},
+		},
+		{
+			// Only the template check may report it. The controller's own
+			// issuer errors all name --issuer-url, so none of them may appear.
+			name:       "an issuer URL with no scheme",
+			mutate:     func(o *Options) { o.Template.IssuerURL = "fiberd-k8s-controller.fiberd-system.svc" },
+			wantErr:    []string{"absolute http or https URL"},
+			wantAbsent: []string{"must use https", "--issuer-url"},
+		},
+		{
 			name: "every problem is reported at once",
 			mutate: func(o *Options) {
 				o.Template.IssuerURL = ""
 				o.Namespace = ""
 				o.ProbeAddr = "nowhere"
+				o.TLSCertFile = ""
 			},
-			wantErr: []string{"issuer URL is required", "--namespace is required", "--health-probe-bind-address"},
+			wantErr: []string{"issuer URL is required", "--namespace is required", "--health-probe-bind-address", "--tls-cert-file is required"},
 		},
 	}
 	for _, tc := range cases {
@@ -284,6 +383,11 @@ func TestValidate(t *testing.T) {
 			for _, want := range tc.wantErr {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("Validate() = %v, want it to name %q", err, want)
+				}
+			}
+			for _, absent := range tc.wantAbsent {
+				if strings.Contains(err.Error(), absent) {
+					t.Errorf("Validate() = %v, want it not to name %q", err, absent)
 				}
 			}
 		})

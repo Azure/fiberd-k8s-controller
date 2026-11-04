@@ -5,13 +5,14 @@
 // named fiberd. Build lays a fixed overlay on top of a copy of it and
 // leaves every other field as the tenant wrote it. The overlay sets only
 // what fiberd needs to run as a grant home. That is the labels the
-// controller selects on, the service account, the readiness gate, two
-// volumes, the image, the Pod identity variables, the gRPC port, the
-// fiberd flags, the probes, Guaranteed resources and the security context
-// of the runtime. Where a tenant field would collide with the overlay,
-// such as a volume of the same name or a probe, Build refuses the grant
-// instead of picking a winner silently. It refuses Pod-level resources
-// too, since they would break the Guaranteed QoS class.
+// controller selects on, the service account, the readiness gate, fiberd's
+// volumes, the image, the Pod identity variables, the trusted CA file, the
+// gRPC port, the fiberd flags, the probes, Guaranteed resources and the
+// security context of the runtime. Where a tenant field would collide
+// with the overlay, such as a volume of the same name or a probe, Build
+// refuses the grant instead of picking a winner silently. It refuses
+// Pod-level resources too, since they would break the Guaranteed QoS
+// class.
 //
 // The Pod runs fiberd's own image, whose entrypoint runs fiberd under tini.
 // The first controller flag, -home=kubernetes, selects the Kubernetes home
@@ -55,6 +56,9 @@ const (
 	grantsVolume    = "fiberd-grants"
 	grantsDir       = "/var/run/fiberd/grants"
 	grantsSizeLimit = "1Mi"
+	tlsVolume       = "fiberd-tls"
+	tlsDir          = "/var/run/fiberd/tls"
+	caFile          = tlsDir + "/ca.crt"
 
 	// rootfsDir is where the runc and gVisor images keep the rootfs their
 	// sandboxes run in.
@@ -70,6 +74,48 @@ const (
 	envPodName      = "POD_NAME"
 	envPodNamespace = "POD_NAMESPACE"
 	envPodUID       = "POD_UID"
+	envSSLCertFile  = "SSL_CERT_FILE"
+)
+
+// The cert-manager csi-driver contract of the tls volume. The driver issues
+// the certificate when the kubelet mounts the volume and writes tls.crt,
+// tls.key and ca.crt into it. No fs-group is set while fiberd runs as root.
+const (
+	// CAIssuerName is the ClusterIssuer every grant Pod's certificate comes
+	// from. The controller's own serving certificate comes from it too.
+	CAIssuerName = "fiberd-ca"
+
+	csiDriverName = "csi.cert-manager.io"
+
+	attrIssuerName      = "csi.cert-manager.io/issuer-name"
+	attrIssuerKind      = "csi.cert-manager.io/issuer-kind"
+	attrCommonName      = "csi.cert-manager.io/common-name"
+	attrDNSNames        = "csi.cert-manager.io/dns-names"
+	attrKeyUsages       = "csi.cert-manager.io/key-usages"
+	attrDuration        = "csi.cert-manager.io/duration"
+	attrRenewBefore     = "csi.cert-manager.io/renew-before"
+	attrReusePrivateKey = "csi.cert-manager.io/reuse-private-key"
+
+	// caIssuerKind is a ClusterIssuer because grant Pods live in tenant
+	// namespaces, and a namespaced Issuer serves only its own.
+	caIssuerKind = "ClusterIssuer"
+
+	// certCommonName is expanded by the driver, not the kubelet, so each
+	// certificate names its own Pod.
+	certCommonName = "${POD_NAME}"
+
+	// certKeyUsages is server auth alone, since fiberd never presents this
+	// certificate as a client.
+	certKeyUsages = "server auth"
+
+	// certDuration and certRenewBefore keep a leaked key useful for a day
+	// at most, and leave a third of it to renew in.
+	certDuration    = "24h"
+	certRenewBefore = "8h"
+
+	// certReusePrivateKey is the driver's default, pinned so a renewal always
+	// makes a new key.
+	certReusePrivateKey = "false"
 )
 
 // The variables a tenant may not set, grouped by why. A test keeps their
@@ -81,7 +127,7 @@ var (
 
 	// trustEnv is where Go reads its trust roots and proxies, so a tenant
 	// value would let the Pod believe a tenant's issuer.
-	trustEnv = []string{"SSL_CERT_FILE", "SSL_CERT_DIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
+	trustEnv = []string{envSSLCertFile, "SSL_CERT_DIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
 
 	// loaderEnv is read by the Go runtime and the dynamic loader. GODEBUG can
 	// relax fiberd's TLS checks, and the loader variables load a tenant's
@@ -91,7 +137,7 @@ var (
 
 // ownedVolumes are the overlay's volumes. A test keeps them equal to the
 // policy's ownedVolumes.
-var ownedVolumes = []string{stateVolume, grantsVolume}
+var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume}
 
 // reservedKeyPrefixes start the template label and annotation keys a tenant
 // may not set. fiberd.io keys are the controller's. The AppArmor and seccomp
@@ -111,15 +157,19 @@ var reservedKeyPrefixes = []string{
 }
 
 // Build returns the pod template the controller applies for cg, with image
-// already resolved by the caller. It never changes cg. When the grant
+// already resolved by the caller. serviceName is the grant's Service, which
+// the Pod's certificate names. Build never changes cg. When the grant
 // cannot run, the error is a field error list that names every field at
 // fault, ready for the grant's status.
-func Build(cg *v1alpha1.CapacityGrant, image string, opts Options) (corev1.PodTemplateSpec, error) {
+func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) (corev1.PodTemplateSpec, error) {
 	if cg == nil {
 		return corev1.PodTemplateSpec{}, errors.New("podtemplate: nil CapacityGrant")
 	}
 	if image == "" {
 		return corev1.PodTemplateSpec{}, fmt.Errorf("podtemplate: grant %s/%s has no resolved image", cg.Namespace, cg.Name)
+	}
+	if serviceName == "" {
+		return corev1.PodTemplateSpec{}, fmt.Errorf("podtemplate: grant %s/%s has no Service name", cg.Namespace, cg.Name)
 	}
 	opts = opts.withDefaults()
 	if err := opts.Validate(); err != nil {
@@ -161,15 +211,17 @@ func Build(cg *v1alpha1.CapacityGrant, image string, opts Options) (corev1.PodTe
 	}
 	overlayMeta(&tmpl.ObjectMeta, cg, grantHash)
 	overlayPodSpec(&tmpl.Spec, opts.ServiceAccount)
-	addVolumes(&tmpl.Spec)
+	addVolumes(&tmpl.Spec, cg, serviceName)
 
 	c.Image = image
 	c.Env = append(c.Env, podEnv()...)
+	c.Env = append(c.Env, caEnv())
 	c.Args = append(c.Args, controllerArgs(rt, tflag, opts)...)
 	c.Ports = append(c.Ports, corev1.ContainerPort{Name: PortNameGRPC, ContainerPort: PortGRPC, Protocol: corev1.ProtocolTCP})
 	c.VolumeMounts = append(c.VolumeMounts,
 		corev1.VolumeMount{Name: stateVolume, MountPath: stateDir},
 		corev1.VolumeMount{Name: grantsVolume, MountPath: grantsDir},
+		corev1.VolumeMount{Name: tlsVolume, MountPath: tlsDir, ReadOnly: true},
 	)
 	setProbes(c)
 	c.Resources = resources
@@ -397,15 +449,25 @@ func podEnv() []corev1.EnvVar {
 	}
 }
 
+// caEnv points fiberd's root pool at the tls volume's CA, so fiberd
+// trusts the controller's HTTPS. SSL_CERT_FILE replaces Go's default bundle
+// file, but Go still loads every file in /etc/ssl/certs, where the image's
+// bundle lives, so the public roots stay for registry pulls. SSL_CERT_DIR
+// would replace that directory and trust the Pod's own tls.crt as a root.
+func caEnv() corev1.EnvVar {
+	return corev1.EnvVar{Name: envSSLCertFile, Value: caFile}
+}
+
 // checkVolumes refuses tenant volumes, mounts and devices that collide
-// with fiberd's state and grants volumes, or that replace the system trust
-// roots and resolver files. A tenant mount of either volume would expose
-// fiberd's keys or grants elsewhere. A tenant mount at or under either
-// path would replace part of what fiberd keeps there. The trust roots
-// decide which issuer fiberd believes and the resolver files where its
-// name points, and nothing of the controller's is mounted beneath them,
-// so a mount above them replaces them too. A projected token is minted for
-// the grant ServiceAccount, and fibers could read it at a tenant path.
+// with the overlay's volumes, or that replace the system trust roots and
+// resolver files. A tenant mount of an overlay volume would expose
+// fiberd's keys, grants or certificate elsewhere. A tenant mount at or
+// under an overlay directory would replace part of what fiberd keeps
+// there. The trust roots decide which issuer fiberd believes and the
+// resolver files where its name points, and nothing of the controller's
+// is mounted beneath them, so a mount above them replaces them too. A
+// projected token is minted for the grant ServiceAccount, and fibers
+// could read it at a tenant path.
 func checkVolumes(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 	var errs field.ErrorList
 	for i, v := range spec.Volumes {
@@ -507,15 +569,36 @@ func trustPath(p string) (string, bool) {
 	return "", false
 }
 
-// addVolumes adds fiberd's state directory and the in-memory directory the
-// home reads grants from. Grants are bearer tokens until mutual TLS binds
-// them, so they never touch the node's disk.
-func addVolumes(spec *corev1.PodSpec) {
+// addVolumes adds fiberd's state directory, the in-memory directory the
+// home reads grants from and the tls volume. Grants are bearer tokens
+// until mutual TLS binds them, so they never touch the node's disk.
+func addVolumes(spec *corev1.PodSpec, cg *v1alpha1.CapacityGrant, serviceName string) {
 	spec.Volumes = append(spec.Volumes,
 		corev1.Volume{Name: stateVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		corev1.Volume{Name: grantsVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
 			SizeLimit: ptr.To(resource.MustParse(grantsSizeLimit)),
 		}}},
+		tlsCSIVolume(cg, serviceName),
 	)
+}
+
+// tlsCSIVolume asks the csi-driver for a certificate that names the grant's
+// Service. fiberd reads only its ca.crt until it serves TLS.
+func tlsCSIVolume(cg *v1alpha1.CapacityGrant, serviceName string) corev1.Volume {
+	host := serviceName + "." + cg.Namespace + ".svc"
+	return corev1.Volume{Name: tlsVolume, VolumeSource: corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{
+		Driver:   csiDriverName,
+		ReadOnly: ptr.To(true),
+		VolumeAttributes: map[string]string{
+			attrIssuerName:      CAIssuerName,
+			attrIssuerKind:      caIssuerKind,
+			attrCommonName:      certCommonName,
+			attrDNSNames:        strings.Join([]string{host, host + ".cluster.local"}, ","),
+			attrKeyUsages:       certKeyUsages,
+			attrDuration:        certDuration,
+			attrRenewBefore:     certRenewBefore,
+			attrReusePrivateKey: certReusePrivateKey,
+		},
+	}}}
 }
