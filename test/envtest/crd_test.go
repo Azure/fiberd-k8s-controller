@@ -31,6 +31,11 @@ func setSpecField(t *testing.T, u *unstructured.Unstructured, name, value string
 	}
 }
 
+// longestHelperImage is a helper image reference of the most characters a
+// registry accepts: a 255-character repository, a 128-character tag and a
+// sha256 digest.
+var longestHelperImage = "ghcr.io/" + strings.Repeat("a", 247) + ":" + strings.Repeat("t", 128) + "@sha256:" + strings.Repeat("0", 64)
+
 // TestCRDValidation creates each object with a server-side dry run, so
 // the API server's schema and CEL rules decide and nothing is stored for
 // the manager to see.
@@ -208,6 +213,21 @@ func TestCRDValidation(t *testing.T) {
 				setSpecField(t, u, "runtime", "hyperlight")
 				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
 			},
+		},
+		{
+			name: "runtime hyperlight with the longest helper image reference",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "hyperlight")
+				setSpecField(t, u, "helperImage", longestHelperImage)
+			},
+		},
+		{
+			name: "runtime hyperlight with a helper image over the longest reference",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "hyperlight")
+				setSpecField(t, u, "helperImage", "x"+longestHelperImage)
+			},
+			wantErr: "spec.helperImage: Too long",
 		},
 		{
 			name:    "a name longer than 56 characters",

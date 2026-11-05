@@ -185,6 +185,11 @@ func TestCapacityGrantSchema(t *testing.T) {
 			rulesNeedFieldPath: true,
 		},
 		{
+			name:      "helperImage fits the longest image reference",
+			path:      "spec.helperImage",
+			maxLength: ptr(int64(456)),
+		},
+		{
 			name:     "zygote requires digest and command",
 			path:     "spec.zygote",
 			required: []string{"digest", "command"},

@@ -59,9 +59,12 @@ type CapacityGrantSpec struct {
 	// helper runs against the libraries of the fiberd container. An init container copies
 	// /fiberd-helper into the Pod, and fiberd runs the helper from
 	// /var/run/fiberd/helper/helper. A guest is passed as -hyperlight-guest in the fiberd
-	// container's args, such as -hyperlight-guest=/var/run/fiberd/helper/guest.
+	// container's args, such as -hyperlight-guest=/var/run/fiberd/helper/guest. It is at
+	// most 456 characters, the longest reference a registry accepts: a 255-character
+	// repository, a 128-character tag and a sha256 digest.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=456
 	HelperImage string `json:"helperImage,omitempty"`
 
 	// podTemplate is the template of the grant Pod, written as in a Deployment.
