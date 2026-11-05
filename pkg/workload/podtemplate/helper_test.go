@@ -15,8 +15,9 @@ import (
 
 // TestBuildHelper checks the init container, volume and mount that put the
 // helper into a hyperlight Pod. The init container is the controller's
-// whatever the tenant's Pod security context says, and it takes only the
-// fiberd container's CPU and memory.
+// whatever the tenant's Pod security context says, it takes only the
+// fiberd container's CPU and memory, and it holds the service account
+// token's path so no token is mounted into it.
 func TestBuildHelper(t *testing.T) {
 	cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
 		setRuntime(cg, v1alpha1.RuntimeHyperlight)
@@ -35,11 +36,15 @@ func TestBuildHelper(t *testing.T) {
 		corev1.ResourceMemory: resource.MustParse("1Gi"),
 	}
 	wantInit := []corev1.Container{{
-		Name:         "fiberd-helper",
-		Image:        testHelperImage,
-		Command:      []string{"cp", "-R", "/fiberd-helper/.", "/var/run/fiberd/helper"},
-		Resources:    corev1.ResourceRequirements{Limits: sized, Requests: sized},
-		VolumeMounts: []corev1.VolumeMount{{Name: "fiberd-helper", MountPath: "/var/run/fiberd/helper"}},
+		Name:      "fiberd-helper",
+		Image:     testHelperImage,
+		Command:   []string{"cp", "-R", "/fiberd-helper/.", "/var/run/fiberd/helper"},
+		Resources: corev1.ResourceRequirements{Limits: sized, Requests: sized},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "fiberd-helper", MountPath: "/var/run/fiberd/helper"},
+			// Taken so the ServiceAccount admission plugin mounts no token.
+			{Name: "fiberd-helper", MountPath: "/var/run/secrets/kubernetes.io/serviceaccount", ReadOnly: true},
+		},
 		SecurityContext: &corev1.SecurityContext{
 			Privileged:               ptr.To(false),
 			AllowPrivilegeEscalation: ptr.To(false),
