@@ -6,10 +6,11 @@ import (
 
 // GrantPolicySpec is what the cluster lets a CapacityGrant ask for.
 type GrantPolicySpec struct {
-	// images lists the repositories a grant Pod image may come from, each fully qualified
-	// such as ghcr.io/azure/fiberd. An entry matches an image that equals it or continues
-	// with /, : or @, so ghcr.io/azure/fiberd matches ghcr.io/azure/fiberd:0.4.0@sha256:...
-	// and not ghcr.io/azure/fiberd-runc. Every image must also carry a digest.
+	// images lists the repositories a grant Pod image may come from, the helperImage of a
+	// hyperlight grant included, each fully qualified such as ghcr.io/azure/fiberd. An entry
+	// matches an image that equals it or continues with /, : or @, so ghcr.io/azure/fiberd
+	// matches ghcr.io/azure/fiberd:0.4.0@sha256:... and not ghcr.io/azure/fiberd-runc. Every
+	// image must also carry a digest.
 	// +required
 	// +listType=set
 	// +kubebuilder:validation:MinItems=1

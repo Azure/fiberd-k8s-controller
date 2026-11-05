@@ -25,6 +25,9 @@ const (
 )
 
 // CapacityGrantSpec describes the capacity a tenant asks for and the Pod that holds it.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",message="helperImage is allowed only for runtime hyperlight",fieldPath=".helperImage",reason="FieldValueForbidden"
+// +kubebuilder:validation:XValidation:rule="!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",message="runtime hyperlight needs helperImage, fiberd does not start without its helper",fieldPath=".helperImage",reason="FieldValueRequired"
 type CapacityGrantSpec struct {
 	// zygote is the program every fiber of the grant is cloned from.
 	// +required
@@ -49,6 +52,17 @@ type CapacityGrantSpec struct {
 	// +optional
 	// +kubebuilder:default="proc"
 	Runtime Runtime `json:"runtime,omitempty"`
+
+	// helperImage is the image the Hyperlight helper comes from. Runtime hyperlight needs it,
+	// and no other runtime accepts it. The image holds an executable /fiberd-helper/helper,
+	// and optionally /fiberd-helper/guest, on fiberd's own base image, so it has cp and the
+	// helper runs against the libraries of the fiberd container. An init container copies
+	// /fiberd-helper into the Pod, and fiberd runs the helper from
+	// /var/run/fiberd/helper/helper. A guest is passed as -hyperlight-guest in the fiberd
+	// container's args, such as -hyperlight-guest=/var/run/fiberd/helper/guest.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	HelperImage string `json:"helperImage,omitempty"`
 
 	// podTemplate is the template of the grant Pod, written as in a Deployment.
 	// It holds exactly one container named fiberd.

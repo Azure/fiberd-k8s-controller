@@ -23,6 +23,14 @@ func loadSample(t *testing.T) *unstructured.Unstructured {
 	return u
 }
 
+// setSpecField sets spec.name of u to value.
+func setSpecField(t *testing.T, u *unstructured.Unstructured, name, value string) {
+	t.Helper()
+	if err := unstructured.SetNestedField(u.Object, value, "spec", name); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestCRDValidation creates each object with a server-side dry run, so
 // the API server's schema and CEL rules decide and nothing is stored for
 // the manager to see.
@@ -173,6 +181,33 @@ func TestCRDValidation(t *testing.T) {
 				testutil.SetPodField(t, u, "securityContext", map[string]any{"seLinuxOptions": map[string]any{"type": "spc_t"}})
 			},
 			wantErr: "seLinuxOptions and windowsOptions are not allowed",
+		},
+		{
+			name: "a helper image on runtime proc",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
+			},
+			wantErr: "helperImage is allowed only for runtime hyperlight",
+		},
+		{
+			name:    "runtime hyperlight without a helper image",
+			mutate:  func(t *testing.T, u *unstructured.Unstructured) { setSpecField(t, u, "runtime", "hyperlight") },
+			wantErr: "runtime hyperlight needs helperImage",
+		},
+		{
+			name: "runtime hyperlight with an empty helper image",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "hyperlight")
+				setSpecField(t, u, "helperImage", "")
+			},
+			wantErr: "spec.helperImage",
+		},
+		{
+			name: "runtime hyperlight with a helper image",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "hyperlight")
+				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
+			},
 		},
 		{
 			name:    "a name longer than 56 characters",

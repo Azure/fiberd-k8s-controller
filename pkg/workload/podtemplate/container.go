@@ -60,6 +60,8 @@ func controllerArgs(rt v1alpha1.Runtime, templateFlag string, opts Options) []st
 		args = append(args, "-runc-rootfs="+rootfsDir)
 	case v1alpha1.RuntimeGvisor:
 		args = append(args, "-gvisor-rootfs="+rootfsDir)
+	case v1alpha1.RuntimeHyperlight:
+		args = append(args, "-hyperlight-helper="+helperFile)
 	}
 	if opts.Plaintext {
 		args = append(args, "-insecure-plaintext")

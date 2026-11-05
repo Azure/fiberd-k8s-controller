@@ -191,6 +191,17 @@ func setRuntime(runtime string) mutation {
 	}
 }
 
+// setHelperImage asks for runtime hyperlight with image as its helper, so
+// the CRD rules on helperImage pass and only the policy decides.
+func setHelperImage(image string) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		setRuntime("hyperlight")(t, u)
+		if err := unstructured.SetNestedField(u.Object, image, "spec", "helperImage"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func setPrivileged(t *testing.T, u *unstructured.Unstructured) {
 	testutil.SetContainerField(t, u, "securityContext", map[string]any{"privileged": true})
 }
@@ -383,6 +394,12 @@ func TestPolicyRefusals(t *testing.T) {
 			substr: "volume fiberd-grant-token is mounted by the controller",
 		},
 		{
+			name:   "refuses a volume named like the controller's helper volume",
+			mutate: setVolume(map[string]any{"name": "fiberd-helper", "emptyDir": map[string]any{}}),
+			reason: metav1.StatusReasonForbidden,
+			substr: "volume fiberd-helper is mounted by the controller",
+		},
+		{
 			// No volume of that name, since the volumes list is checked first
 			// and would then decide instead of the mount.
 			name: "refuses a mount naming the controller's grants volume",
@@ -548,6 +565,67 @@ func TestPolicyPrivilegedNamespace(t *testing.T) {
 			u := readSample(t, tc.ns)
 			tc.mutate(t, u)
 			expectDenied(t, dryRunCreate(t.Context(), u), metav1.StatusReasonForbidden, tc.substr)
+		})
+	}
+}
+
+// TestPolicyHelperImage lets one namespace run hyperlight and lists a
+// helper repository, so only the helper image rules can refuse a grant
+// there.
+func TestPolicyHelperImage(t *testing.T) {
+	const helperRepo = "ghcr.io/azure/fiberd-helper"
+	ns := namespace(t)
+	listed := readSample(t, ns)
+	setHelperImage(helperRepo+"@"+testDigest)(t, listed)
+
+	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
+		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, ns)
+		s.Runtimes = append(s.Runtimes, v1alpha1.RuntimeHyperlight)
+		s.Images = append(s.Images, helperRepo)
+	}, refused(listed, metav1.StatusReasonForbidden, "helper image "+helperRepo+"@"+testDigest+" "+imageListMessage))
+	testutil.Eventually(t, "a hyperlight grant to be admitted in "+ns, accepted(listed))
+
+	cases := []struct {
+		name   string
+		image  string
+		reason metav1.StatusReason
+		substr string
+	}{
+		{
+			name:   "refuses a helper image without a digest",
+			image:  helperRepo + ":0.4.0",
+			reason: metav1.StatusReasonInvalid,
+			substr: "spec.helperImage must carry a digest",
+		},
+		{
+			name:   "refuses a helper image from an unlisted repository",
+			image:  "registry.example/helper@" + testDigest,
+			reason: metav1.StatusReasonForbidden,
+			substr: "helper image registry.example/helper@" + testDigest + " " + imageListMessage,
+		},
+		{
+			name:   "refuses a helper image whose repository only starts with a listed one",
+			image:  helperRepo + "-evil@" + testDigest,
+			reason: metav1.StatusReasonForbidden,
+			substr: "helper image " + helperRepo + "-evil@" + testDigest + " " + imageListMessage,
+		},
+		{
+			name:  "admits a listed helper image with a tag and a digest",
+			image: helperRepo + ":0.4.0@" + testDigest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u := readSample(t, ns)
+			setHelperImage(tc.image)(t, u)
+			err := dryRunCreate(t.Context(), u)
+			if tc.reason == "" {
+				if err != nil {
+					t.Fatalf("create: %v, want it admitted", err)
+				}
+				return
+			}
+			expectDenied(t, err, tc.reason, tc.substr)
 		})
 	}
 }

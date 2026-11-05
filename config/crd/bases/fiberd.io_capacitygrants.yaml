@@ -76,6 +76,17 @@ spec:
                 x-kubernetes-validations:
                 - message: fibers.warm must not exceed fibers.max
                   rule: '!has(self.warm) || self.warm <= self.max'
+              helperImage:
+                description: |-
+                  helperImage is the image the Hyperlight helper comes from. Runtime hyperlight needs it,
+                  and no other runtime accepts it. The image holds an executable /fiberd-helper/helper,
+                  and optionally /fiberd-helper/guest, on fiberd's own base image, so it has cp and the
+                  helper runs against the libraries of the fiberd container. An init container copies
+                  /fiberd-helper into the Pod, and fiberd runs the helper from
+                  /var/run/fiberd/helper/helper. A guest is passed as -hyperlight-guest in the fiberd
+                  container's args, such as -hyperlight-guest=/var/run/fiberd/helper/guest.
+                minLength: 1
+                type: string
               podTemplate:
                 description: |-
                   podTemplate is the template of the grant Pod, written as in a Deployment.
@@ -9057,6 +9068,17 @@ spec:
             - podTemplate
             - zygote
             type: object
+            x-kubernetes-validations:
+            - fieldPath: .helperImage
+              message: helperImage is allowed only for runtime hyperlight
+              reason: FieldValueForbidden
+              rule: '!has(self.helperImage) || (has(self.runtime) && self.runtime
+                == ''hyperlight'')'
+            - fieldPath: .helperImage
+              message: runtime hyperlight needs helperImage, fiberd does not start
+                without its helper
+              reason: FieldValueRequired
+              rule: '!has(self.runtime) || self.runtime != ''hyperlight'' || has(self.helperImage)'
           status:
             description: status is the observed state of the grant.
             properties:

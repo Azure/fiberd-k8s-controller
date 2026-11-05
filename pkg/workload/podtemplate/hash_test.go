@@ -112,6 +112,7 @@ func TestHashSensitive(t *testing.T) {
 		{name: "caller thumbprint", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.CallerThumbprint = strings.Repeat("Q", 43) }, wantChange: true},
 		{name: "runtime", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc }, wantChange: true},
 		{name: "image", image: "ghcr.io/azure/fiberd:v0.5.0", wantChange: true},
+		{name: "helper image", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.HelperImage = testHelperImage }, wantChange: true},
 		{name: "template label", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.PodTemplate.Labels["tier"] = "edge" }, wantChange: true},
 		{
 			name:       "template annotation",
@@ -260,5 +261,15 @@ func TestImageOf(t *testing.T) {
 				t.Errorf("ImageOf = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestHashPinned pins the hash of the test grant to the value it had
+// before helperImage existed. Fields added later are omitted while unset,
+// so an upgrade does not roll the Pods of every grant.
+func TestHashPinned(t *testing.T) {
+	const want = "572197dce76da108"
+	if got := mustHash(t, testGrant(), testImage); got != want {
+		t.Fatalf("Hash = %q, want %q", got, want)
 	}
 }

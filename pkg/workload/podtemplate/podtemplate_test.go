@@ -463,6 +463,27 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.runtime",
 		},
 		{
+			name:    "hyperlight without a helper image",
+			mod:     func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeHyperlight },
+			wantErr: "spec.helperImage: Required value",
+		},
+		{
+			name: "a helper image on another runtime",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.Runtime = v1alpha1.RuntimeGvisor
+				cg.Spec.HelperImage = testHelperImage
+			},
+			wantErr: "spec.helperImage: Forbidden: allowed only for runtime hyperlight",
+		},
+		{
+			name: "a helper image on the unset runtime",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.Runtime = ""
+				cg.Spec.HelperImage = testHelperImage
+			},
+			wantErr: "spec.helperImage: Forbidden: allowed only for runtime hyperlight",
+		},
+		{
 			name:    "bad digest",
 			mod:     func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.Digest = "sha256:ABC" },
 			wantErr: "spec.zygote: Invalid value",
@@ -617,6 +638,13 @@ func TestBuildErrors(t *testing.T) {
 			name:    "host users",
 			mod:     podMod(func(s *corev1.PodSpec) { s.HostUsers = ptr.To(false) }),
 			wantErr: "spec.podTemplate.spec.hostUsers",
+		},
+		{
+			name: "volume named fiberd-helper",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "fiberd-helper", VolumeSource: emptyDir}}
+			}),
+			wantErr: "spec.podTemplate.spec.volumes[0].name: Duplicate value",
 		},
 		{
 			name: "volume named fiberd-state",

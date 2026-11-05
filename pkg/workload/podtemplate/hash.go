@@ -33,6 +33,9 @@ const hashLen = 16
 // result inside the Quantity, which would write to the informer's cached
 // grant. Quantity.MarshalJSON has a value receiver and writes nothing
 // back. An unset budget serializes as null.
+//
+// HelperImage is omitted while empty, so the hash of a grant on another
+// runtime is the one it had before the field existed.
 type hashInput struct {
 	Namespace        string                 `json:"namespace"`
 	Zygote           v1alpha1.ZygoteSpec    `json:"zygote"`
@@ -41,6 +44,7 @@ type hashInput struct {
 	CallerThumbprint string                 `json:"callerThumbprint"`
 	Runtime          v1alpha1.Runtime       `json:"runtime"`
 	Image            string                 `json:"image"`
+	HelperImage      string                 `json:"helperImage,omitempty"`
 	PodTemplate      corev1.PodTemplateSpec `json:"podTemplate"`
 }
 
@@ -61,6 +65,7 @@ func Hash(cg *v1alpha1.CapacityGrant, image string) (string, error) {
 		CallerThumbprint: cg.Spec.CallerThumbprint,
 		Runtime:          runtimeOrDefault(cg.Spec.Runtime),
 		Image:            image,
+		HelperImage:      cg.Spec.HelperImage,
 		PodTemplate:      cg.Spec.PodTemplate,
 	}
 	raw, err := json.Marshal(in)

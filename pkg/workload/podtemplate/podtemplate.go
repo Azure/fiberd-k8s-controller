@@ -7,8 +7,9 @@
 // what fiberd needs to run as a grant home. That is the labels the
 // controller selects on, the service account, the readiness gate, fiberd's
 // volumes, the image, the Pod identity variables, the trusted CA file, the
-// gRPC port, the fiberd flags, the probes, Guaranteed resources and the
-// security context of the runtime. Where a tenant field would collide
+// gRPC port, the fiberd flags, the probes, Guaranteed resources, the
+// security context of the runtime and, for hyperlight, the init container
+// that installs the helper. Where a tenant field would collide
 // with the overlay, such as a volume of the same name or a probe, Build
 // refuses the grant instead of picking a winner silently. It refuses
 // Pod-level resources too, since they would break the Guaranteed QoS
@@ -17,7 +18,7 @@
 // The Pod runs fiberd's own image, whose entrypoint runs fiberd under tini.
 // The first controller flag, -home=kubernetes, selects the Kubernetes home
 // inside fiberd. Nothing is added to the image, and the builder sets no
-// container command.
+// command on the fiberd container.
 //
 // proc and runc Pods run with Unconfined seccomp and AppArmor profiles.
 // fiberd has no seccomp profile of its own yet.
@@ -147,7 +148,7 @@ var (
 
 // ownedVolumes are the overlay's volumes. A test keeps them equal to the
 // policy's ownedVolumes.
-var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume, grantTokenVolume}
+var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume, grantTokenVolume, helperVolume}
 
 // reservedKeyPrefixes start the template label and annotation keys a tenant
 // may not set. fiberd.io keys are the controller's. The AppArmor and seccomp
@@ -191,6 +192,9 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	tmpl := cg.Spec.PodTemplate.DeepCopy()
 
 	rt, errs := checkRuntime(specPath.Child("runtime"), cg.Spec.Runtime)
+	if len(errs) == 0 {
+		errs = append(errs, checkHelperImage(specPath.Child("helperImage"), rt, cg.Spec.HelperImage)...)
+	}
 	tflag, tErrs := templateFlag(specPath.Child("zygote"), cg.Spec.Zygote)
 	errs = append(errs, tErrs...)
 	errs = append(errs, checkShape(podPath, &tmpl.Spec)...)
@@ -236,6 +240,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	)
 	setProbes(c)
 	c.Resources = resources
+	addHelper(&tmpl.Spec, c, rt, cg.Spec.HelperImage)
 	if c.SecurityContext, err = securityContext(c.SecurityContext, rt); err != nil {
 		return corev1.PodTemplateSpec{}, err
 	}

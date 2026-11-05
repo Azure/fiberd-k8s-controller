@@ -129,7 +129,7 @@ func TestBuildSecurityContext(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
-				cg.Spec.Runtime = tc.runtime
+				setRuntime(cg, tc.runtime)
 				container(cg).SecurityContext = tc.tenant
 			})
 			got := mustBuild(t, cg, testOptions()).Spec.Containers[0].SecurityContext
