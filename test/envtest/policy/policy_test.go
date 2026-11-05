@@ -570,10 +570,15 @@ func TestPolicyPrivilegedNamespace(t *testing.T) {
 }
 
 // TestPolicyHelperImage lets one namespace run hyperlight and lists a
-// helper repository, so only the helper image rules can refuse a grant
-// there.
+// helper repository in helperImages, so only the image rules can refuse a
+// grant there.
 func TestPolicyHelperImage(t *testing.T) {
-	const helperRepo = "ghcr.io/azure/fiberd-helper"
+	const (
+		helperRepo = "ghcr.io/azure/fiberd-helper"
+		// fiberdRepo is listed in the shipped images.
+		fiberdRepo = "ghcr.io/azure/fiberd"
+	)
+	helperListMessage := imageListMessage + " in GrantPolicy default spec.helperImages"
 	ns := namespace(t)
 	listed := readSample(t, ns)
 	setHelperImage(helperRepo+"@"+testDigest)(t, listed)
@@ -581,43 +586,58 @@ func TestPolicyHelperImage(t *testing.T) {
 	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
 		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, ns)
 		s.Runtimes = append(s.Runtimes, v1alpha1.RuntimeHyperlight)
-		s.Images = append(s.Images, helperRepo)
-	}, refused(listed, metav1.StatusReasonForbidden, "helper image "+helperRepo+"@"+testDigest+" "+imageListMessage))
+		s.HelperImages = []string{helperRepo}
+	}, refused(listed, metav1.StatusReasonForbidden, "helper image "+helperRepo+"@"+testDigest+" "+helperListMessage))
 	testutil.Eventually(t, "a hyperlight grant to be admitted in "+ns, accepted(listed))
 
 	cases := []struct {
 		name   string
-		image  string
+		mutate mutation
 		reason metav1.StatusReason
 		substr string
 	}{
 		{
 			name:   "refuses a helper image without a digest",
-			image:  helperRepo + ":0.4.0",
+			mutate: setHelperImage(helperRepo + ":0.4.0"),
 			reason: metav1.StatusReasonInvalid,
 			substr: "spec.helperImage must carry a digest",
 		},
 		{
 			name:   "refuses a helper image from an unlisted repository",
-			image:  "registry.example/helper@" + testDigest,
+			mutate: setHelperImage("registry.example/helper@" + testDigest),
 			reason: metav1.StatusReasonForbidden,
-			substr: "helper image registry.example/helper@" + testDigest + " " + imageListMessage,
+			substr: "helper image registry.example/helper@" + testDigest + " " + helperListMessage,
 		},
 		{
 			name:   "refuses a helper image whose repository only starts with a listed one",
-			image:  helperRepo + "-evil@" + testDigest,
+			mutate: setHelperImage(helperRepo + "-evil@" + testDigest),
 			reason: metav1.StatusReasonForbidden,
-			substr: "helper image " + helperRepo + "-evil@" + testDigest + " " + imageListMessage,
+			substr: "helper image " + helperRepo + "-evil@" + testDigest + " " + helperListMessage,
 		},
 		{
-			name:  "admits a listed helper image with a tag and a digest",
-			image: helperRepo + ":0.4.0@" + testDigest,
+			name:   "refuses a helper image whose repository is listed only in images",
+			mutate: setHelperImage(fiberdRepo + "@" + testDigest),
+			reason: metav1.StatusReasonForbidden,
+			substr: "helper image " + fiberdRepo + "@" + testDigest + " " + helperListMessage,
+		},
+		{
+			name: "refuses a fiberd image whose repository is listed only in helperImages",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setHelperImage(helperRepo+"@"+testDigest)(t, u)
+				setImage(helperRepo+"@"+testDigest)(t, u)
+			},
+			reason: metav1.StatusReasonForbidden,
+			substr: "image " + helperRepo + "@" + testDigest + " " + imageListMessage + " in GrantPolicy default spec.images",
+		},
+		{
+			name:   "admits a listed helper image with a tag and a digest",
+			mutate: setHelperImage(helperRepo + ":0.4.0@" + testDigest),
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u := readSample(t, ns)
-			setHelperImage(tc.image)(t, u)
+			tc.mutate(t, u)
 			err := dryRunCreate(t.Context(), u)
 			if tc.reason == "" {
 				if err != nil {
@@ -738,6 +758,18 @@ func TestGrantPolicySchema(t *testing.T) {
 			mutate:  setGrantPolicyList("images", "ghcr.io/azure/fiberd:0.4.0"),
 			stored:  true,
 			substrs: []string{"spec.images", "should match"},
+		},
+		{
+			name:    "refuses an empty helperImages list",
+			mutate:  setGrantPolicyList("helperImages"),
+			stored:  true,
+			substrs: []string{"spec.helperImages", "should have at least 1 items"},
+		},
+		{
+			name:    "refuses a helperImages entry with a tag",
+			mutate:  setGrantPolicyList("helperImages", "ghcr.io/azure/fiberd-helper:0.4.0"),
+			stored:  true,
+			substrs: []string{"spec.helperImages", "should match"},
 		},
 		{
 			name:    "refuses an empty runtimes list",

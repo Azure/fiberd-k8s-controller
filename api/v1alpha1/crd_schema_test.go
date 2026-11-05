@@ -310,6 +310,23 @@ func TestGrantPolicySchema(t *testing.T) {
 			maxLength: ptr(int64(255)),
 		},
 		{
+			name:     "helperImages is a set",
+			path:     "spec.helperImages",
+			listType: "set",
+		},
+		{
+			name:     "helperImages has between one and 64 items",
+			path:     "spec.helperImages",
+			minItems: ptr(int64(1)),
+			maxItems: ptr(int64(64)),
+		},
+		{
+			name:      "helperImages items are repositories",
+			path:      "spec.helperImages.[]",
+			pattern:   v1alpha1.ImageRepositoryPattern,
+			maxLength: ptr(int64(255)),
+		},
+		{
 			name:     "privilegedNamespaces is a set",
 			path:     "spec.privilegedNamespaces",
 			listType: "set",

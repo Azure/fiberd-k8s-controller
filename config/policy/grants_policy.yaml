@@ -147,14 +147,16 @@ spec:
       messageExpression: "'image ' + variables.image + ' is not under a repository listed in GrantPolicy default spec.images'"
       message: "the fiberd container image is not under a repository listed in GrantPolicy default spec.images"
       reason: Forbidden
-    # The helper runs inside the fiberd container, so its image meets the
-    # same rules as fiberd's.
+    # The helper runs inside the fiberd container, so its image carries a
+    # digest as fiberd's does. It is checked only against helperImages: the
+    # helper runs under fiberd with far less than the fiberd container holds,
+    # so a repository trusted for helpers does not qualify as a fiberd image.
     - expression: "variables.helperImage == '' || variables.helperImage.matches('@sha256:[a-f0-9]{64}$')"
       message: "spec.helperImage must carry a digest, such as ghcr.io/azure/fiberd-helper:0.4.0@sha256:..."
       reason: Invalid
-    - expression: "variables.helperImage == '' || params.spec.images.exists(p, variables.helperImage == p || variables.helperImage.startsWith(p + '/') || variables.helperImage.startsWith(p + ':') || variables.helperImage.startsWith(p + '@'))"
-      messageExpression: "'helper image ' + variables.helperImage + ' is not under a repository listed in GrantPolicy default spec.images'"
-      message: "spec.helperImage is not under a repository listed in GrantPolicy default spec.images"
+    - expression: "variables.helperImage == '' || (has(params.spec.helperImages) && params.spec.helperImages.exists(p, variables.helperImage == p || variables.helperImage.startsWith(p + '/') || variables.helperImage.startsWith(p + ':') || variables.helperImage.startsWith(p + '@')))"
+      messageExpression: "'helper image ' + variables.helperImage + ' is not under a repository listed in GrantPolicy default spec.helperImages'"
+      message: "spec.helperImage is not under a repository listed in GrantPolicy default spec.helperImages"
       reason: Forbidden
     - expression: "!variables.envNames.exists(n, n in variables.ownedEnv)"
       messageExpression: "'env ' + variables.envNames.filter(n, n in variables.ownedEnv)[0] + ' is not a variable a tenant may set'"

@@ -6,11 +6,11 @@ import (
 
 // GrantPolicySpec is what the cluster lets a CapacityGrant ask for.
 type GrantPolicySpec struct {
-	// images lists the repositories a grant Pod image may come from, the helperImage of a
-	// hyperlight grant included, each fully qualified such as ghcr.io/azure/fiberd. An entry
-	// matches an image that equals it or continues with /, : or @, so ghcr.io/azure/fiberd
-	// matches ghcr.io/azure/fiberd:0.4.0@sha256:... and not ghcr.io/azure/fiberd-runc. Every
-	// image must also carry a digest.
+	// images lists the repositories the fiberd container image may come from, each fully
+	// qualified such as ghcr.io/azure/fiberd. An entry matches an image that equals it or
+	// continues with /, : or @, so ghcr.io/azure/fiberd matches
+	// ghcr.io/azure/fiberd:0.4.0@sha256:... and not ghcr.io/azure/fiberd-runc. Every image
+	// must also carry a digest. A helperImage is not checked against this list.
 	// +required
 	// +listType=set
 	// +kubebuilder:validation:MinItems=1
@@ -18,6 +18,19 @@ type GrantPolicySpec struct {
 	// +kubebuilder:validation:items:MaxLength=255
 	// +kubebuilder:validation:items:Pattern=`^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 	Images []string `json:"images"`
+
+	// helperImages lists the repositories the helperImage of a hyperlight grant may come
+	// from, matched as images entries are, and a helperImage must also carry a digest. It is
+	// a list of its own because the helper runs under fiberd with far less than the fiberd
+	// container holds, so a repository trusted for helpers does not qualify as a fiberd
+	// image. While it is unset no hyperlight grant is admitted.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=255
+	// +kubebuilder:validation:items:Pattern=`^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+	HelperImages []string `json:"helperImages,omitempty"`
 
 	// privilegedNamespaces are the namespaces whose grants may set securityContext.privileged
 	// on the fiberd container, or ask for the gvisor or hyperlight runtime, which run

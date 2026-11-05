@@ -17,7 +17,7 @@
 # The grant names it by digest, which `docker exec kind-control-plane crictl
 # images --digests` shows, since the GrantPolicy refuses a helper image
 # without one. The GrantPolicy must also list localhost/fiberd-fakehelper in
-# images, hyperlight in runtimes and the grant's namespace in
+# helperImages, hyperlight in runtimes and the grant's namespace in
 # privilegedNamespaces.
 #
 # The base images are pinned by digest. The runtime base is fiberd's own, as
