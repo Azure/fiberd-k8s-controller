@@ -61,9 +61,11 @@ func checkHelperImage(fld *field.Path, rt v1alpha1.Runtime, image string) field.
 // it. Other runtimes get nothing.
 //
 // The init container runs the helper image itself, because only a
-// container of that image can read its files. The contract puts the image
-// on fiberd's base image, so cp is there. It copies the whole directory,
-// which brings the guest along when the image has one.
+// container of that image can read its files. The contract asks for cp on
+// the image's PATH and for files under /fiberd-helper that other users can
+// read, since the copy runs as helperUID. The image's base is otherwise
+// free, because the helper runs in the fiberd container. It copies the
+// whole directory, which brings the guest along when the image has one.
 //
 // The init container has the fiberd container's CPU and memory, which
 // keeps the Pod Guaranteed without raising its requests, since the Pod's

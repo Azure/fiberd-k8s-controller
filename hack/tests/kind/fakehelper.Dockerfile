@@ -20,8 +20,10 @@
 # helperImages, hyperlight in runtimes and the grant's namespace in
 # privilegedNamespaces.
 #
-# The base images are pinned by digest. The runtime base is fiberd's own, as
-# the helper image contract asks.
+# The base images are pinned by digest. The helper image contract needs cp
+# on the PATH, which the runtime base has, files under /fiberd-helper that
+# other users can read, which the modes below give, and a helper that is
+# static or links only an old enough glibc, which CGO_ENABLED=0 makes static.
 ARG GO_IMAGE=golang:1.27.3-bookworm@sha256:b08bc99468058b6d8a0ada17fa54996b910d5e82a7e95bee0372e3bd98415258
 ARG RUNTIME_BASE=debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
