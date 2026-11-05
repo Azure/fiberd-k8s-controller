@@ -255,7 +255,7 @@ func TestBuildLeavesGrantAlone(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.Runtime = tc.runtime
-				container(cg).Args = []string{"-registry=example.com/zygotes"}
+				container(cg).Args = []string{"-delta-registry=example.com/deltas"}
 				container(cg).SecurityContext = &corev1.SecurityContext{RunAsUser: ptr.To(int64(0))}
 				if tc.writeBudget != "" {
 					cg.Spec.WriteBudget = ptr.To(resource.MustParse(tc.writeBudget))
@@ -306,8 +306,15 @@ func TestBuildVolumes(t *testing.T) {
 	grantsMount := corev1.VolumeMount{Name: "fiberd-grants", MountPath: "/var/run/fiberd/grants"}
 	tlsMount := corev1.VolumeMount{Name: "fiberd-tls", MountPath: "/var/run/fiberd/tls", ReadOnly: true}
 	tokenMount := corev1.VolumeMount{Name: "fiberd-grant-token", MountPath: "/var/run/secrets/fiberd.io/grant", ReadOnly: true}
+	sealVol := corev1.Volume{Name: "fiberd-seal-key", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+		SecretName:  "fleet-seal",
+		Items:       []corev1.KeyToPath{{Key: "seal-key.json", Path: "seal-key.json"}},
+		DefaultMode: ptr.To[int32](0o400),
+	}}}
+	sealMount := corev1.VolumeMount{Name: "fiberd-seal-key", MountPath: "/var/run/secrets/fiberd.io/seal-key", ReadOnly: true}
 	cases := []struct {
 		name        string
+		zygote      *v1alpha1.ZygoteSpec
 		volumes     []corev1.Volume
 		mounts      []corev1.VolumeMount
 		wantVolumes []corev1.Volume
@@ -339,10 +346,25 @@ func TestBuildVolumes(t *testing.T) {
 			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol, tokenVol},
 			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}, stateMount, grantsMount, tlsMount, tokenMount},
 		},
+		{
+			name:        "a registry zygote without a seal key adds no volume",
+			zygote:      &v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z"},
+			wantVolumes: []corev1.Volume{stateVol, grantsVol, tlsVol, tokenVol},
+			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount, tlsMount, tokenMount},
+		},
+		{
+			name:        "a seal key Secret is mounted read-only",
+			zygote:      &v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z", SealKeySecretName: "fleet-seal"},
+			wantVolumes: []corev1.Volume{stateVol, grantsVol, tlsVol, tokenVol, sealVol},
+			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount, tlsMount, tokenMount, sealMount},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
+				if tc.zygote != nil {
+					cg.Spec.Zygote = *tc.zygote
+				}
 				cg.Spec.PodTemplate.Spec.Volumes = tc.volumes
 				container(cg).VolumeMounts = tc.mounts
 			})
@@ -497,6 +519,18 @@ func TestBuildErrors(t *testing.T) {
 			name:    "zygote command with a space",
 			mod:     func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.Command = []string{"/app/zygote", "a b"} },
 			wantErr: "spec.zygote: Invalid value",
+		},
+		{
+			name:    "zygote command and registry",
+			mod:     func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.Registry = "ghcr.io/a/z" },
+			wantErr: "exactly one of zygote.command and zygote.registry must be set",
+		},
+		{
+			name: "zygote registry with a tag",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z:latest"}
+			},
+			wantErr: "spec.zygote.registry: Invalid value",
 		},
 		{
 			name: "two containers",
@@ -675,6 +709,13 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.podTemplate.spec.volumes[0].name",
 		},
 		{
+			name: "volume named fiberd-seal-key",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "fiberd-seal-key", VolumeSource: emptyDir}}
+			}),
+			wantErr: "spec.podTemplate.spec.volumes[0].name",
+		},
+		{
 			name: "hostPath volume",
 			mod: podMod(func(s *corev1.PodSpec) {
 				s.Volumes = []corev1.Volume{{Name: "host", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/"}}}}
@@ -838,7 +879,7 @@ func TestBuildErrors(t *testing.T) {
 		{
 			name: "owned arg",
 			mod: ctrMod(func(c *corev1.Container) {
-				c.Args = []string{"-registry=example.com/z", "-issuer=https://evil.example"}
+				c.Args = []string{"-delta-registry=example.com/d", "-issuer=https://evil.example"}
 			}),
 			wantErr: "spec.podTemplate.spec.containers[0].args[1]",
 		},

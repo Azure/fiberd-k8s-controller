@@ -28,7 +28,7 @@ const (
 
 // controllerArgs are the fiberd flags the controller sets. Build appends
 // them after the tenant's args. CheckArgs refuses every one of them in the
-// tenant's args, -home and -template included. -home=kubernetes comes
+// tenant's args, -home and the zygote's -template or -registry included. -home=kubernetes comes
 // first and selects the Kubernetes home inside fiberd.
 //
 // The grant fetch sets no -grant-ca-file. It trusts the same root pool as
@@ -38,7 +38,7 @@ const (
 // The kubelet expands $(VAR) in args. Values that come from the grant or
 // the options are escaped so fiberd sees them as written. -node-id is the
 // one value meant to expand.
-func controllerArgs(rt v1alpha1.Runtime, templateFlag string, opts Options) []string {
+func controllerArgs(rt v1alpha1.Runtime, zygoteArgs []string, opts Options) []string {
 	args := []string{
 		"-home=" + fiberdHome,
 		"-verifier=jwks",
@@ -53,8 +53,8 @@ func controllerArgs(rt v1alpha1.Runtime, templateFlag string, opts Options) []st
 		"-grant-token-file=" + grantTokenFile,
 		"-grant-fetch-timeout=" + grantFetchTimeout.String(),
 		"-endpoint-family=" + string(opts.EndpointFamily),
-		"-template=" + escapeExpansion(templateFlag),
 	}
+	args = append(args, zygoteArgs...)
 	switch rt {
 	case v1alpha1.RuntimeRunc:
 		args = append(args, "-runc-rootfs="+rootfsDir)

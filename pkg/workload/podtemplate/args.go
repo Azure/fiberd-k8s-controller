@@ -17,21 +17,18 @@ const ArgPattern = `^-{1,2}[a-z][a-z0-9-]*(=.*)?$`
 var argPattern = regexp.MustCompile(ArgPattern)
 
 // tenantFlags are the fiberd flags a tenant may pass in args. Every other
-// flag fiberd binds is the controller's, such as -issuer and -template, or
-// the operator's, such as -userns-pool and -audit-key, and a flag that
-// does not exist yet is nobody's until it is added here. The admission
-// policy in config/policy repeats the list, and a test keeps the two
-// equal and every entry a flag fiberd registers.
+// flag fiberd binds is the controller's, such as -issuer and the -template,
+// -registry and -delta-seal-key that spec.zygote sets, or the operator's,
+// such as -userns-pool and -audit-key, and a flag that does not exist yet
+// is nobody's until it is added here. The admission policy in
+// config/policy repeats the list, and a test keeps the two equal and every
+// entry a flag fiberd registers.
 var tenantFlags = map[string]bool{
-	// The repository the grant's zygote artifacts are pulled from.
-	"registry": true,
 	// Where the grant's parked sessions are published and claimed.
 	"delta-registry": true,
 	// The key that signs the grant's deltas, shared by the grant's Pods so
 	// one can claim what another parked.
 	"delta-key": true,
-	// The key that seals the grant's deltas and opens its sealed templates.
-	"delta-seal-key": true,
 	// Further keys whose deltas the grant's home imports.
 	"delta-trust": true,
 	// The devices the grant's engine may drive, which the container's
@@ -80,7 +77,7 @@ func sortedNames(set map[string]bool) []string {
 
 // CheckArgs refuses tenant args that name a flag outside TenantFlags. Each
 // arg must be one flag in the one- or two-dash form with its value after
-// "=", such as -registry=example.com/zygotes. Only a boolean flag may omit
+// "=", such as -delta-registry=example.com/deltas. Only a boolean flag may omit
 // the value.
 func CheckArgs(args []string) error {
 	return checkArgs(field.NewPath("args"), args).ToAggregate()

@@ -27,6 +27,16 @@ const (
 	// spec.helperImages hold the same pattern, and a test checks it.
 	ImageRepositoryPattern = `^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 
+	// RegistryPattern is the form of spec.zygote.registry, an ImageRepositoryPattern
+	// repository with an optional http:// or https:// scheme, as fiberd's -registry takes it.
+	// fiberd appends @<digest>, so a tag or digest never belongs here. The CRD marker holds
+	// the same pattern, and a test checks it.
+	RegistryPattern = `^(https?://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+
+	// SealKeySecretKey is the data key of the Secret spec.zygote.sealKeySecretName names. It
+	// holds the fleet's 32-byte symmetric seal key as a JWK.
+	SealKeySecretKey = "seal-key.json"
+
 	// ConditionProgressing reports whether the grant Pods are being rolled out.
 	ConditionProgressing = "Progressing"
 

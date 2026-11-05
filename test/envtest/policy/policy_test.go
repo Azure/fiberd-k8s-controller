@@ -221,13 +221,13 @@ func TestPolicyRefusals(t *testing.T) {
 			name:   "refuses an arg that is not flag-shaped",
 			mutate: setArgs("verbose"),
 			reason: metav1.StatusReasonInvalid,
-			substr: "arg verbose is not one flag such as -registry=example.com",
+			substr: "arg verbose is not one flag such as -delta-registry=example.com",
 		},
 		{
 			name:   "refuses an empty arg",
 			mutate: setArgs(""),
 			reason: metav1.StatusReasonInvalid,
-			substr: "is not one flag such as -registry=example.com",
+			substr: "is not one flag such as -delta-registry=example.com",
 		},
 		{
 			name:   "refuses a controller flag with a value",
@@ -260,14 +260,26 @@ func TestPolicyRefusals(t *testing.T) {
 			substr: "arg -userns-pool=0:65536 names a flag a tenant may not set",
 		},
 		{
-			name:   "admits a tenant flag with its value",
+			name:   "refuses the zygote registry flag, which spec.zygote sets",
 			mutate: setArgs("-registry=example.com/zygotes"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "arg -registry=example.com/zygotes names a flag a tenant may not set",
+		},
+		{
+			name:   "refuses the seal key flag, which spec.zygote sets",
+			mutate: setArgs("-delta-seal-key=/k"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "arg -delta-seal-key=/k names a flag a tenant may not set",
+		},
+		{
+			name:   "admits a tenant flag with its value",
+			mutate: setArgs("-delta-registry=example.com/deltas"),
 		},
 		{
 			name:   "refuses a bare flag that takes a value",
-			mutate: setArgs("-registry"),
+			mutate: setArgs("-delta-registry"),
 			reason: metav1.StatusReasonInvalid,
-			substr: "arg -registry must carry its value as -name=value",
+			substr: "arg -delta-registry must carry its value as -name=value",
 		},
 		{
 			name:   "admits a bare boolean flag",
@@ -398,6 +410,12 @@ func TestPolicyRefusals(t *testing.T) {
 			mutate: setVolume(map[string]any{"name": "fiberd-helper", "emptyDir": map[string]any{}}),
 			reason: metav1.StatusReasonForbidden,
 			substr: "volume fiberd-helper is mounted by the controller",
+		},
+		{
+			name:   "refuses a volume named like the controller's seal key volume",
+			mutate: setVolume(map[string]any{"name": "fiberd-seal-key", "emptyDir": map[string]any{}}),
+			reason: metav1.StatusReasonForbidden,
+			substr: "volume fiberd-seal-key is mounted by the controller",
 		},
 		{
 			// No volume of that name, since the volumes list is checked first

@@ -18,6 +18,16 @@ The cluster needs [cert-manager](https://cert-manager.io/docs/installation/) and
 The GrantPolicy comes before the first tenant because the admission policy fails closed. Until a GrantPolicy named default exists, every create and update of a CapacityGrant is refused.
 On an upgrade from a version without the policy, create default right after the apply. Until it exists, existing grants accept no update, finalizer removal included.
 
+A CapacityGrant's zygote is either a command in the image or an artifact fiberd pulls by digest from a registry. Either may name a Secret in the grant's namespace whose `seal-key.json` key holds the fleet's seal key, which seals the grant's deltas and opens sealed artifacts. These fields replace the `-registry` and `-delta-seal-key` args, which a tenant can no longer set.
+
+```yaml
+spec:
+  zygote:
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    registry: ghcr.io/team-a/zygotes
+    sealKeySecretName: fleet-seal-key
+```
+
 A CapacityGrant's args may name only the fiberd flags a tenant sets. [`pkg/workload/podtemplate/args.go`](./pkg/workload/podtemplate/args.go) lists them with the reason for each, and the admission policy refuses the rest.
 
 The project is under construction. A grant Pod fetches and renews its own grant, but a caller cannot fetch one yet. The work is tracked in the issues of this repository.

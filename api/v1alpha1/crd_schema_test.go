@@ -127,6 +127,11 @@ type schemaCase struct {
 	rulesNeedFieldPath bool
 }
 
+// zygoteRules are the CEL rules on spec.zygote, in marker order.
+var zygoteRules = []string{
+	"has(self.command) != has(self.registry)",
+}
+
 // podTemplateRules are the CEL rules on spec.podTemplate, in marker order.
 var podTemplateRules = []string{
 	"has(self.spec)",
@@ -190,9 +195,26 @@ func TestCapacityGrantSchema(t *testing.T) {
 			maxLength: ptr(int64(456)),
 		},
 		{
-			name:     "zygote requires digest and command",
+			name:     "zygote requires digest",
 			path:     "spec.zygote",
-			required: []string{"digest", "command"},
+			required: []string{"digest"},
+		},
+		{
+			name:  "zygote carries the source rules",
+			path:  "spec.zygote",
+			rules: zygoteRules,
+		},
+		{
+			name:      "zygote registry is a repository",
+			path:      "spec.zygote.registry",
+			pattern:   v1alpha1.RegistryPattern,
+			maxLength: ptr(int64(255)),
+		},
+		{
+			name:      "zygote sealKeySecretName is a Secret name",
+			path:      "spec.zygote.sealKeySecretName",
+			pattern:   `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`,
+			maxLength: ptr(int64(253)),
 		},
 		{name: "zygote digest is a sha256 pattern", path: "spec.zygote.digest", pattern: v1alpha1.DigestPattern},
 		{
