@@ -2,6 +2,7 @@ package podtemplate
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 
@@ -21,6 +22,12 @@ const (
 
 	helperVolume = "fiberd-helper"
 	helperDir    = "/var/run/fiberd/helper"
+
+	// helperSizeLimit caps the emptyDir the helper is copied into, so the
+	// kubelet evicts a Pod whose helper image copies too much instead of
+	// letting it fill the node's disk. 128Mi is a start, to be raised if a
+	// helper and its guest need more.
+	helperSizeLimit = "128Mi"
 
 	// helperFile is fiberd's -hyperlight-helper.
 	helperFile = helperDir + "/helper"
@@ -63,8 +70,10 @@ func addHelper(spec *corev1.PodSpec, c *corev1.Container, rt v1alpha1.Runtime, i
 		return
 	}
 	spec.Volumes = append(spec.Volumes, corev1.Volume{
-		Name:         helperVolume,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		Name: helperVolume,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			SizeLimit: ptr.To(resource.MustParse(helperSizeLimit)),
+		}},
 	})
 	sized := corev1.ResourceList{}
 	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {

@@ -55,7 +55,9 @@ func TestBuildHelper(t *testing.T) {
 		t.Errorf("initContainers mismatch (-want +got):\n%s", diff)
 	}
 
-	wantVolume := corev1.Volume{Name: "fiberd-helper", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
+	wantVolume := corev1.Volume{Name: "fiberd-helper", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+		SizeLimit: ptr.To(resource.MustParse("128Mi")),
+	}}}
 	if diff := cmp.Diff(wantVolume, spec.Volumes[len(spec.Volumes)-1]); diff != "" {
 		t.Errorf("last volume mismatch (-want +got):\n%s", diff)
 	}
