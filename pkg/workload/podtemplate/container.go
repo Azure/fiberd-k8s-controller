@@ -3,6 +3,7 @@ package podtemplate
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -11,10 +12,28 @@ import (
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
 
+const (
+	// grantFetchTimeout is how long fiberd retries its first grant before it
+	// refuses to start. It is fiberd's own default, set here because the
+	// startup probe has to outlast it.
+	grantFetchTimeout = 60 * time.Second
+
+	// startupGrace is what the startup probe allows beyond the first fetch
+	// for fiberd to open its port.
+	startupGrace = 30 * time.Second
+
+	// startupPeriodSeconds is how often the startup probe dials.
+	startupPeriodSeconds = 2
+)
+
 // controllerArgs are the fiberd flags the controller sets. Build appends
 // them after the tenant's args. CheckArgs refuses every one of them in the
 // tenant's args, -home and -template included. -home=kubernetes comes
 // first and selects the Kubernetes home inside fiberd.
+//
+// The grant fetch sets no -grant-ca-file. It trusts the same root pool as
+// the key set fetch, which SSL_CERT_FILE points at the fiberd CA, so the two
+// cannot disagree.
 //
 // The kubelet expands $(VAR) in args. Values that come from the grant or
 // the options are escaped so fiberd sees them as written. -node-id is the
@@ -31,6 +50,8 @@ func controllerArgs(rt v1alpha1.Runtime, templateFlag string, opts Options) []st
 		"-node-id=$(" + envPodName + ")",
 		"-state=" + stateDir,
 		"-grants-dir=" + grantsDir,
+		"-grant-token-file=" + grantTokenFile,
+		"-grant-fetch-timeout=" + grantFetchTimeout.String(),
 		"-endpoint-family=" + string(opts.EndpointFamily),
 		"-template=" + escapeExpansion(templateFlag),
 	}
@@ -78,16 +99,18 @@ const probeTimeoutSeconds = 10
 // setProbes sets fiberd's three probes. checkProbes has refused any
 // tenant probe.
 //
-// The startup probe gives fiberd a minute to open its port. Readiness runs
-// fiberd readyz, which fails while fiberd drains, so a draining Pod leaves
-// its Service. The zygote-ready gate still says the template is warm.
-// Liveness runs fiberd healthz. Both exec probes name the same state
-// directory as fiberd's -state flag, because the admin socket lives there.
+// fiberd opens its port only once it holds a grant, so the startup probe
+// outlasts the first fetch, or the kubelet would restart a Pod that is
+// waiting on the controller. Readiness runs fiberd readyz, which fails
+// while fiberd drains, so a draining Pod leaves its Service. The zygote-ready
+// gate still says the template is warm. Liveness runs fiberd healthz. Both
+// exec probes name the same state directory as fiberd's -state flag, because
+// the admin socket lives there.
 func setProbes(c *corev1.Container) {
 	c.StartupProbe = &corev1.Probe{
 		ProbeHandler:     corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(PortGRPC)}},
-		PeriodSeconds:    2,
-		FailureThreshold: 30,
+		PeriodSeconds:    startupPeriodSeconds,
+		FailureThreshold: int32((grantFetchTimeout + startupGrace) / (startupPeriodSeconds * time.Second)),
 	}
 	c.ReadinessProbe = &corev1.Probe{
 		ProbeHandler:     corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: fiberdProbe("readyz")}},

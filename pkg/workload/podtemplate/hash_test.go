@@ -229,3 +229,36 @@ func TestHashLeavesGrantAlone(t *testing.T) {
 		})
 	}
 }
+
+func TestImageOf(t *testing.T) {
+	cases := []struct {
+		name string
+		mod  func(*v1alpha1.CapacityGrant)
+		want string
+	}{
+		{
+			name: "the fiberd container's image",
+			mod:  func(cg *v1alpha1.CapacityGrant) { container(cg).Image = testImage },
+			want: testImage,
+		},
+		{
+			name: "no image set",
+			mod:  func(cg *v1alpha1.CapacityGrant) { container(cg).Image = "" },
+		},
+		{
+			name: "no fiberd container",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.PodTemplate.Spec.Containers = []corev1.Container{{Name: "other", Image: testImage}}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cg := testGrant()
+			tc.mod(cg)
+			if got := ImageOf(cg); got != tc.want {
+				t.Errorf("ImageOf = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

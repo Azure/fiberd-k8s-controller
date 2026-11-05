@@ -9,7 +9,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/clock"
@@ -41,10 +43,18 @@ import (
 // Secret. A marker cannot name a constant, so the name repeats
 // issuer.KeySecretName and a test pins the two together.
 //
+// The grant route reviews a Pod's token and walks its owners. Those rules
+// sit here because the Makefile generates the controller's roles from this
+// package and pkg/controller. A marker in pkg/workload would land on the
+// tenant role, and one in pkg/issuer would land nowhere.
+//
 // +kubebuilder:rbac:groups=coordination.k8s.io,namespace=fiberd-system,resources=leases,verbs=get;create;update
 // +kubebuilder:rbac:groups="",namespace=fiberd-system,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",namespace=fiberd-system,resources=secrets,verbs=create
 // +kubebuilder:rbac:groups="",namespace=fiberd-system,resources=secrets,resourceNames=grant-issuer-key,verbs=get
+// +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+// +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 
 const (
 	// LeaderElectionID names the Lease the replicas compete for.
@@ -67,10 +77,13 @@ const (
 //
 // Every replica syncs its informers, so a standby is warm when it takes
 // over, and /readyz holds until that sync is done. Only the leader
-// reconciles. The cache drops managed fields, which nothing reads. Metrics
-// are off.
+// reconciles. Metrics are off.
 func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager, error) {
 	scheme, err := newScheme()
+	if err != nil {
+		return nil, err
+	}
+	cacheOpts, err := cacheOptions()
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +95,7 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 		LeaderElectionReleaseOnCancel: true,
 		HealthProbeBindAddress:        o.ProbeAddr,
 		Metrics:                       metricsserver.Options{BindAddress: "0"},
-		Cache:                         cache.Options{DefaultTransform: cache.TransformStripManagedFields()},
+		Cache:                         cacheOpts,
 		Controller:                    config.Controller{EnableWarmup: ptr.To(true)},
 	})
 	if err != nil {
@@ -96,12 +109,14 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 		return nil, fmt.Errorf("add the readyz check: %w", err)
 	}
 
+	clk := clock.RealClock{}
+	workload := deployment.New(mgr.GetClient())
 	r := &controller.CapacityGrantReconciler{
 		Client:   mgr.GetClient(),
-		Workload: deployment.New(mgr.GetClient()),
+		Workload: workload,
 		Template: o.Template,
 		Recorder: mgr.GetEventRecorder(EventSource),
-		Clock:    clock.RealClock{},
+		Clock:    clk,
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return nil, fmt.Errorf("set up the CapacityGrant reconciler: %w", err)
@@ -124,8 +139,19 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 	if err != nil {
 		return nil, fmt.Errorf("read the serving certificate: %w", err)
 	}
-	handler := (&grant.Issuer{Ring: ring, URL: o.Template.IssuerURL}).Handler()
-	srv, err := issuer.NewServer(ctx, o.IssuerAddr, handler, cw.GetCertificate)
+	handler := issuer.NewHandler(issuer.Config{
+		Issuer:         &grant.Issuer{Ring: ring, URL: o.Template.IssuerURL, Now: clk.Now},
+		Reviewer:       &issuer.APITokenReviewer{Client: mgr.GetClient(), IssuerURL: o.Template.IssuerURL},
+		Cache:          mgr.GetCache(),
+		Live:           mgr.GetAPIReader(),
+		Workload:       workload,
+		Limits:         o.Limits,
+		ServiceAccount: o.Template.ServiceAccount,
+		Lease:          o.Template.Lease,
+		Clock:          clk,
+		Log:            ctrl.Log.WithName("issuer"),
+	})
+	srv, err := issuer.NewServer(ctx, o.IssuerAddr, handler.Routes(), cw.GetCertificate)
 	if err != nil {
 		return nil, fmt.Errorf("create the issuer server: %w", err)
 	}
@@ -154,14 +180,37 @@ func newScheme() (*runtime.Scheme, error) {
 	return s, nil
 }
 
+// cacheOptions drops managed fields, which nothing reads, and caches only
+// the Pods and ReplicaSets of grants, so the rest of a busy cluster costs
+// this process no memory. The grant route reads an object the filter hides
+// from the API server.
+func cacheOptions() (cache.Options, error) {
+	ofGrant, err := labels.NewRequirement(v1alpha1.LabelGrant, selection.Exists, nil)
+	if err != nil {
+		return cache.Options{}, fmt.Errorf("select the objects of a grant: %w", err)
+	}
+	selector := labels.NewSelector().Add(*ofGrant)
+	return cache.Options{
+		DefaultTransform: cache.TransformStripManagedFields(),
+		ByObject: map[client.Object]cache.ByObject{
+			&corev1.Pod{}:        {Label: selector},
+			&appsv1.ReplicaSet{}: {Label: selector},
+		},
+	}, nil
+}
+
 // cacheSynced is ready once the informers of every kind the reconciler
-// watches have synced. WaitForCacheSync alone covers only the informers that
-// exist, and a probe can run before the controller has asked for its own. So
-// the check gets each informer first, which creates any that is missing.
-// Both steps run under the probe request's context, so a probe that times
-// out fails instead of hanging.
+// watches or the grant route reads have synced, so a replica takes grant
+// traffic only with a warm cache. WaitForCacheSync alone covers only the
+// informers that exist, and a probe can run before anyone has asked for
+// them. So the check gets each informer first, which creates any that is
+// missing. Both steps run under the probe request's context, so a probe that
+// times out fails instead of hanging.
 func cacheSynced(mgr ctrl.Manager) healthz.Checker {
-	watched := []client.Object{&v1alpha1.CapacityGrant{}, &appsv1.Deployment{}, &corev1.Service{}}
+	watched := []client.Object{
+		&v1alpha1.CapacityGrant{}, &appsv1.Deployment{}, &corev1.Service{},
+		&corev1.Pod{}, &appsv1.ReplicaSet{},
+	}
 	return func(req *http.Request) error {
 		c := mgr.GetCache()
 		for _, obj := range watched {

@@ -377,6 +377,12 @@ func TestPolicyRefusals(t *testing.T) {
 			substr: "volume fiberd-tls is mounted by the controller",
 		},
 		{
+			name:   "refuses a volume named like the controller's grant token volume",
+			mutate: setVolume(map[string]any{"name": "fiberd-grant-token", "emptyDir": map[string]any{}}),
+			reason: metav1.StatusReasonForbidden,
+			substr: "volume fiberd-grant-token is mounted by the controller",
+		},
+		{
 			// No volume of that name, since the volumes list is checked first
 			// and would then decide instead of the mount.
 			name: "refuses a mount naming the controller's grants volume",

@@ -100,23 +100,29 @@ func testLease(t *testing.T) {
 // name that is not registered answers 404.
 func testProbes(t *testing.T) {
 	for _, path := range []string{"/healthz", "/readyz", "/readyz/cache-sync", "/readyz/issuer"} {
-		url := "http://" + probeAddr + path
-		testutil.Eventually(t, url+" to answer 200", func(ctx context.Context) (bool, error) {
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-			if err != nil {
-				return false, err
-			}
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				return false, testutil.NotYet(err)
-			}
-			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return false, testutil.NotYet(fmt.Errorf("GET %s = %d", url, resp.StatusCode))
-			}
-			return true, nil
-		})
+		waitForProbe(t, path)
 	}
+}
+
+// waitForProbe waits for path on the probe server to answer 200.
+func waitForProbe(t *testing.T, path string) {
+	t.Helper()
+	url := "http://" + probeAddr + path
+	testutil.Eventually(t, url+" to answer 200", func(ctx context.Context) (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return false, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false, testutil.NotYet(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false, testutil.NotYet(fmt.Errorf("GET %s = %d", url, resp.StatusCode))
+		}
+		return true, nil
+	})
 }
 
 func testDiscovery(t *testing.T) {
@@ -513,11 +519,7 @@ func checkAppliedOnly(t *testing.T, obj client.Object) {
 // so a request that fails to complete is retried.
 func getIssuerJSON(t *testing.T, path string, v any) {
 	t.Helper()
-	// The certificate names issuerHost, which does not resolve here. The URL
-	// dials the loopback address and ServerName carries the name to verify.
-	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: issuerRoots, ServerName: issuerHost}}
-	defer tr.CloseIdleConnections()
-	c := &http.Client{Transport: tr, Timeout: issuerRequestTimeout}
+	c := issuerClient(t)
 	url := "https://" + issuerAddr + path
 	var body []byte
 	testutil.Eventually(t, url+" to answer", func(ctx context.Context) (bool, error) {
@@ -542,6 +544,16 @@ func getIssuerJSON(t *testing.T, path string, v any) {
 	if err := json.Unmarshal(body, v); err != nil {
 		t.Fatalf("decode %s %q: %v", url, body, err)
 	}
+}
+
+// issuerClient verifies the issuer listener as a grant Pod would. The
+// certificate names issuerHost, which does not resolve here, so a URL dials
+// the loopback address and ServerName carries the name to verify.
+func issuerClient(t *testing.T) *http.Client {
+	t.Helper()
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: issuerRoots, ServerName: issuerHost}}
+	t.Cleanup(tr.CloseIdleConnections)
+	return &http.Client{Transport: tr, Timeout: issuerRequestTimeout}
 }
 
 // keyIDs lists the key ids of set in order.

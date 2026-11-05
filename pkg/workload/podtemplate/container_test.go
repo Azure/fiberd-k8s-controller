@@ -30,6 +30,8 @@ func wantProcArgs() []string {
 		"-node-id=$(POD_NAME)",
 		"-state=/var/lib/fiberd",
 		"-grants-dir=/var/run/fiberd/grants",
+		"-grant-token-file=/var/run/secrets/fiberd.io/grant/token",
+		"-grant-fetch-timeout=1m0s",
 		"-endpoint-family=inet4",
 		"-template=" + testDigest + "=/app/zygote --port=8080",
 	}
@@ -249,6 +251,8 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 			fs := flag.NewFlagSet("fiberd", flag.ContinueOnError)
 			cfg.Bind(fs)
 			home := fs.String("home", "", "the fiberd home, bound by cmd/fiberd")
+			tokenFile := fs.String("grant-token-file", "", "the Pod's token, bound by cmd/fiberd")
+			fetchTimeout := fs.Duration("grant-fetch-timeout", 0, "the first fetch's bound, bound by cmd/fiberd")
 			if err := fs.Parse(args); err != nil {
 				t.Fatalf("fiberd refused %q: %v", args, err)
 			}
@@ -270,6 +274,8 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 				{"node-id", cfg.Node.ID, "fiberd-web-7d9f8c6b5-x2k4p"},
 				{"state", cfg.Node.StateDir, "/var/lib/fiberd"},
 				{"grants-dir", cfg.Node.GrantsDir, "/var/run/fiberd/grants"},
+				{"grant-token-file", *tokenFile, "/var/run/secrets/fiberd.io/grant/token"},
+				{"grant-fetch-timeout", *fetchTimeout, time.Minute},
 				{"endpoint-family", cfg.Endpoint.Family, "inet4"},
 				{"template", cfg.Runtime.Templates[testDigest], tc.wantTemplate},
 				{"runc-rootfs", cfg.Runtime.Runc.Rootfs, tc.wantRunc},
@@ -287,10 +293,12 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 }
 
 func TestBuildProbes(t *testing.T) {
+	// 90 seconds of dials. A probe that gave up at the fetch's own 60 seconds
+	// would restart a Pod still waiting on the controller.
 	startup := &corev1.Probe{
 		ProbeHandler:     corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(8484)}},
 		PeriodSeconds:    2,
-		FailureThreshold: 30,
+		FailureThreshold: 45,
 	}
 	// The exec probes wait longer than the five seconds fiberd healthz and
 	// fiberd readyz wait, and readyz replaces a TCP check so that a

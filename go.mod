@@ -3,9 +3,11 @@ module github.com/Azure/fiberd-k8s-controller
 go 1.27.3
 
 require (
-	github.com/Azure/fiberd v0.2.1-0.20261104012535-967ea6755120
+	github.com/Azure/fiberd v0.2.1-0.20261104230529-193fc0f7a8fe
 	github.com/go-jose/go-jose/v4 v4.1.8
+	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
+	golang.org/x/time v0.15.0
 	k8s.io/api v0.37.2
 	k8s.io/apiextensions-apiserver v0.37.2
 	k8s.io/apimachinery v0.37.2
@@ -24,7 +26,6 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
 	github.com/go-openapi/swag v0.27.1 // indirect
@@ -62,7 +63,6 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.83.2 // indirect

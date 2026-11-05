@@ -330,8 +330,14 @@ func tenantNamespace(t *testing.T, bound bool) string {
 // allowed reports whether the API server lets controllerUser act on attrs
 // right now.
 func allowed(ctx context.Context, attrs *authorizationv1.ResourceAttributes) (bool, error) {
+	return userAllowed(ctx, controllerUser, attrs)
+}
+
+// userAllowed reports whether the API server lets user act on attrs right
+// now.
+func userAllowed(ctx context.Context, user string, attrs *authorizationv1.ResourceAttributes) (bool, error) {
 	sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
-		User:               controllerUser,
+		User:               user,
 		ResourceAttributes: attrs,
 	}}
 	if err := admin.Create(ctx, sar); err != nil {

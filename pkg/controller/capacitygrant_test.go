@@ -110,6 +110,11 @@ func (w *fakeWorkload) Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tm
 	return w.apply(ctx, cg, tmpl)
 }
 
+// GrantOf is here for the interface. The reconciler never traces a Pod.
+func (w *fakeWorkload) GrantOf(context.Context, client.Reader, *corev1.Pod) (*v1alpha1.CapacityGrant, error) {
+	return nil, workload.ErrNotOwned
+}
+
 // observes returns an observe function that reports obs.
 func observes(obs workload.Observation) func(context.Context, *v1alpha1.CapacityGrant) (workload.Observation, error) {
 	return func(context.Context, *v1alpha1.CapacityGrant) (workload.Observation, error) { return obs, nil }

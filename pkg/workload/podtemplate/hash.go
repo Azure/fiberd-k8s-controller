@@ -71,6 +71,19 @@ func Hash(cg *v1alpha1.CapacityGrant, image string) (string, error) {
 	return hex.EncodeToString(sum[:])[:hashLen], nil
 }
 
+// ImageOf returns the image the tenant set on the fiberd container of cg,
+// or an empty string when there is none. The reconciler and the grant
+// endpoint both call it, so the hash a Pod carries and the hash the endpoint
+// compares it with come from the same image.
+func ImageOf(cg *v1alpha1.CapacityGrant) string {
+	for _, c := range cg.Spec.PodTemplate.Spec.Containers {
+		if c.Name == ContainerName {
+			return c.Image
+		}
+	}
+	return ""
+}
+
 // runtimeOrDefault is the runtime the CRD defaults an unset one to.
 func runtimeOrDefault(rt v1alpha1.Runtime) v1alpha1.Runtime {
 	if rt == "" {
