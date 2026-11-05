@@ -622,7 +622,7 @@ func TestReconcileAcrossPasses(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cg := testGrant()
-			want, err := podtemplate.Build(cg, testImage, testOptions)
+			want, err := podtemplate.Build(cg, testImage, workload.ObjectName(cg), testOptions)
 			if err != nil {
 				t.Fatalf("podtemplate.Build: %v", err)
 			}

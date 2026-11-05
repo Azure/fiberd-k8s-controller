@@ -22,7 +22,9 @@ const (
 	testNamespace = "team-a"
 	testPodUID    = "3f2a6c1e-8b9d-4e5f-a1b2-c3d4e5f6a7b8"
 	testPodName   = "fiberd-web-7d9f8c6b5-x2k4p"
-	testIssuerURL = "https://fiberd-k8s-controller.fiberd-system.svc"
+
+	testIssuerHost = "fiberd-k8s-controller.fiberd-system.svc"
+	testIssuerURL  = "https://" + testIssuerHost
 )
 
 var (

@@ -62,6 +62,20 @@ rules:
   - create
   - patch
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resourceNames:
+  - grant-issuer-key
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
   - coordination.k8s.io
   resources:
   - leases

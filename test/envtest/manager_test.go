@@ -4,11 +4,15 @@ package envtest_test
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -21,10 +25,14 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/fiberd/pkg/grant"
+
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 	"github.com/Azure/fiberd-k8s-controller/cmd/fiberd-k8s-controller/app"
+	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
+	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
 )
 
 const (
@@ -39,6 +47,10 @@ const (
 
 	// quietPeriod is how long a steady grant must leave its objects alone.
 	quietPeriod = 2 * time.Second
+
+	// issuerRequestTimeout is short of testutil.PollTimeout, so a request
+	// that hangs is retried within the wait.
+	issuerRequestTimeout = 5 * time.Second
 )
 
 // reasonNewRSAvailable is the Deployment controller's Progressing reason
@@ -53,7 +65,9 @@ func TestManager(t *testing.T) {
 		run  func(t *testing.T)
 	}{
 		{name: "one replica holds the leader-election Lease", run: testLease},
-		{name: "healthz and readyz answer 200 once the manager has started", run: testProbes},
+		{name: "healthz, readyz and each named readyz check answer 200 once the manager has started", run: testProbes},
+		{name: "discovery names the issuer URL and the JWKS under it over HTTPS", run: testDiscovery},
+		{name: "the JWKS serves exactly the keys of the key Secret the controller created", run: testKeySet},
 		{name: "a new grant gets a Service and a Deployment it controls, written only by server-side apply", run: testCreated},
 		{name: "a spec change is applied by server-side apply and changes the grant hash", run: testSpecChange},
 		{name: "a restartedAt annotation from another field manager survives an apply", run: testRestartedAt},
@@ -70,7 +84,7 @@ func TestManager(t *testing.T) {
 
 func testLease(t *testing.T) {
 	key := client.ObjectKey{Namespace: controllerNamespace, Name: app.LeaderElectionID}
-	eventually(t, "a holder of Lease "+key.String(), func(ctx context.Context) (bool, error) {
+	testutil.Eventually(t, "a holder of Lease "+key.String(), func(ctx context.Context) (bool, error) {
 		lease := &coordinationv1.Lease{}
 		if err := admin.Get(ctx, key, lease); err != nil {
 			return false, err
@@ -81,22 +95,64 @@ func testLease(t *testing.T) {
 
 // testProbes checks the probe server on the free port controllerOptions
 // picked. /healthz is a ping. /readyz answers 200 only once the informers
-// of every watched kind have synced.
+// of every watched kind have synced and the issuer serves. The aggregate
+// passes with a check missing, so each readyz check is asked by name. A
+// name that is not registered answers 404.
 func testProbes(t *testing.T) {
-	for _, path := range []string{"/healthz", "/readyz"} {
+	for _, path := range []string{"/healthz", "/readyz", "/readyz/cache-sync", "/readyz/issuer"} {
 		url := "http://" + probeAddr + path
-		eventually(t, url+" to answer 200", func(ctx context.Context) (bool, error) {
+		testutil.Eventually(t, url+" to answer 200", func(ctx context.Context) (bool, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 			if err != nil {
 				return false, err
 			}
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				return false, nil //nolint:nilerr // The server may not listen yet.
+				return false, testutil.NotYet(err)
 			}
 			_ = resp.Body.Close()
-			return resp.StatusCode == http.StatusOK, nil
+			if resp.StatusCode != http.StatusOK {
+				return false, testutil.NotYet(fmt.Errorf("GET %s = %d", url, resp.StatusCode))
+			}
+			return true, nil
 		})
+	}
+}
+
+func testDiscovery(t *testing.T) {
+	var got struct {
+		Issuer  string `json:"issuer"`
+		JWKSURI string `json:"jwks_uri"`
+	}
+	getIssuerJSON(t, issuer.DiscoveryPath, &got)
+	if got.Issuer != issuerURL {
+		t.Errorf("discovery issuer = %q, want %q", got.Issuer, issuerURL)
+	}
+	if want := issuerURL + issuer.JWKSPath; got.JWKSURI != want {
+		t.Errorf("discovery jwks_uri = %q, want %q", got.JWKSURI, want)
+	}
+}
+
+// testKeySet proves the generated Role lets the controller user create and
+// read the key Secret, since the manager ran as that user.
+func testKeySet(t *testing.T) {
+	key := client.ObjectKey{Namespace: controllerNamespace, Name: issuer.KeySecretName}
+	secret := &corev1.Secret{}
+	if err := admin.Get(t.Context(), key, secret); err != nil {
+		t.Fatalf("get Secret %s: %v", key, err)
+	}
+	if got := secret.Labels[v1alpha1.LabelManagedBy]; got != v1alpha1.ManagedBy {
+		t.Errorf("Secret %s label %s = %q, want %q", key, v1alpha1.LabelManagedBy, got, v1alpha1.ManagedBy)
+	}
+	ring, err := grant.DecodeKeyRing(secret.Data[issuer.KeySecretField])
+	if err != nil {
+		t.Fatalf("decode Secret %s field %s: %v", key, issuer.KeySecretField, err)
+	}
+
+	var set jose.JSONWebKeySet
+	getIssuerJSON(t, issuer.JWKSPath, &set)
+	if diff := cmp.Diff(keyIDs(ring.Public()), keyIDs(set)); diff != "" {
+		t.Errorf("JWKS key ids mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -162,7 +218,7 @@ func testServiceReturns(t *testing.T) {
 	}
 	key := client.ObjectKeyFromObject(svc)
 	got := &corev1.Service{}
-	eventually(t, "Service "+key.String()+" to come back", func(ctx context.Context) (bool, error) {
+	testutil.Eventually(t, "Service "+key.String()+" to come back", func(ctx context.Context) (bool, error) {
 		if err := admin.Get(ctx, key, got); err != nil {
 			return false, err
 		}
@@ -300,7 +356,7 @@ func testSecondPass(t *testing.T) {
 		if time.Now().After(deadline) {
 			return
 		}
-		time.Sleep(pollInterval)
+		time.Sleep(testutil.PollInterval)
 	}
 }
 
@@ -352,7 +408,7 @@ func waitForObjects(t *testing.T, cg *v1alpha1.CapacityGrant) (*appsv1.Deploymen
 	key := client.ObjectKey{Namespace: cg.Namespace, Name: workload.ObjectName(cg)}
 	dep := &appsv1.Deployment{}
 	svc := &corev1.Service{}
-	eventually(t, "Deployment and Service "+key.String(), func(ctx context.Context) (bool, error) {
+	testutil.Eventually(t, "Deployment and Service "+key.String(), func(ctx context.Context) (bool, error) {
 		if err := admin.Get(ctx, key, dep); err != nil {
 			return false, err
 		}
@@ -367,7 +423,7 @@ func waitForHashChange(t *testing.T, cg *v1alpha1.CapacityGrant, old string) *ap
 	t.Helper()
 	key := client.ObjectKey{Namespace: cg.Namespace, Name: workload.ObjectName(cg)}
 	dep := &appsv1.Deployment{}
-	eventually(t, "a new grant hash on Deployment "+key.String(), func(ctx context.Context) (bool, error) {
+	testutil.Eventually(t, "a new grant hash on Deployment "+key.String(), func(ctx context.Context) (bool, error) {
 		if err := admin.Get(ctx, key, dep); err != nil {
 			return false, err
 		}
@@ -383,7 +439,7 @@ func waitForCondition(t *testing.T, cg *v1alpha1.CapacityGrant, typ string, stat
 	t.Helper()
 	key := client.ObjectKeyFromObject(cg)
 	got := &v1alpha1.CapacityGrant{}
-	eventually(t, "condition "+typ+"="+string(status)+" "+reason+" on CapacityGrant "+key.String(), func(ctx context.Context) (bool, error) {
+	testutil.Eventually(t, "condition "+typ+"="+string(status)+" "+reason+" on CapacityGrant "+key.String(), func(ctx context.Context) (bool, error) {
 		if err := admin.Get(ctx, key, got); err != nil {
 			return false, err
 		}
@@ -396,7 +452,7 @@ func waitForCondition(t *testing.T, cg *v1alpha1.CapacityGrant, typ string, stat
 // with reason, reported by the controller.
 func waitForWarningEvent(t *testing.T, cg *v1alpha1.CapacityGrant, reason string) {
 	t.Helper()
-	eventually(t, fmt.Sprintf("a Warning Event %s on CapacityGrant %s/%s", reason, cg.Namespace, cg.Name), func(ctx context.Context) (bool, error) {
+	testutil.Eventually(t, fmt.Sprintf("a Warning Event %s on CapacityGrant %s/%s", reason, cg.Namespace, cg.Name), func(ctx context.Context) (bool, error) {
 		list := &eventsv1.EventList{}
 		if err := admin.List(ctx, list, client.InNamespace(cg.Namespace)); err != nil {
 			return false, err
@@ -449,4 +505,50 @@ func checkAppliedOnly(t *testing.T, obj client.Object) {
 	if !applied {
 		t.Errorf("%T %s has no Apply entry from %s in %v", obj, obj.GetName(), v1alpha1.ManagedBy, obj.GetManagedFields())
 	}
+}
+
+// getIssuerJSON gets path from the issuer listener over HTTPS and decodes
+// the body of a 200 answer into v. The listener is bound before the
+// manager starts, but nothing waits for it to serve before the cases run,
+// so a request that fails to complete is retried.
+func getIssuerJSON(t *testing.T, path string, v any) {
+	t.Helper()
+	// The certificate names issuerHost, which does not resolve here. The URL
+	// dials the loopback address and ServerName carries the name to verify.
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: issuerRoots, ServerName: issuerHost}}
+	defer tr.CloseIdleConnections()
+	c := &http.Client{Transport: tr, Timeout: issuerRequestTimeout}
+	url := "https://" + issuerAddr + path
+	var body []byte
+	testutil.Eventually(t, url+" to answer", func(ctx context.Context) (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return false, err
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			return false, testutil.NotYet(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, err = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return false, testutil.NotYet(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("GET %s = %d, want 200, body %q", url, resp.StatusCode, body)
+		}
+		return true, nil
+	})
+	if err := json.Unmarshal(body, v); err != nil {
+		t.Fatalf("decode %s %q: %v", url, body, err)
+	}
+}
+
+// keyIDs lists the key ids of set in order.
+func keyIDs(set jose.JSONWebKeySet) []string {
+	ids := make([]string, 0, len(set.Keys))
+	for _, k := range set.Keys {
+		ids = append(ids, k.KeyID)
+	}
+	return ids
 }

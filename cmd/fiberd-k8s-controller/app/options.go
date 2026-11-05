@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -36,6 +37,10 @@ const (
 	// defaultProbeAddr is where /healthz and /readyz listen.
 	defaultProbeAddr = ":8081"
 
+	// defaultIssuerAddr is where discovery and the key set are served over
+	// HTTPS.
+	defaultIssuerAddr = ":8443"
+
 	// envPodNamespace names the downward API variable that gives the
 	// controller its own namespace.
 	envPodNamespace = "POD_NAMESPACE"
@@ -56,10 +61,22 @@ type Options struct {
 
 	// ProbeAddr is the host and port that serve /healthz and /readyz.
 	ProbeAddr string
+
+	// IssuerAddr is the host and port that serve discovery and the key set
+	// over HTTPS.
+	IssuerAddr string
+
+	// TLSCertFile is the PEM certificate the issuer listener serves. It is
+	// reread when it changes, so a renewed certificate needs no restart.
+	TLSCertFile string
+
+	// TLSKeyFile is the PEM private key of TLSCertFile.
+	TLSKeyFile string
 }
 
 // NewOptions returns every option at its default. The namespace comes from
-// $POD_NAMESPACE as it reads now. The issuer URL has no default.
+// $POD_NAMESPACE as it reads now. The issuer URL and the serving
+// certificate and key files have no default.
 func NewOptions() *Options {
 	return &Options{
 		Template: podtemplate.Options{
@@ -73,6 +90,7 @@ func NewOptions() *Options {
 		Namespace:   os.Getenv(envPodNamespace),
 		LeaderElect: true,
 		ProbeAddr:   defaultProbeAddr,
+		IssuerAddr:  defaultIssuerAddr,
 	}
 }
 
@@ -99,11 +117,17 @@ func (o *Options) AddFlags(fs *flag.FlagSet) {
 		"Elect one leader among the replicas to run the reconciler.")
 	fs.StringVar(&o.ProbeAddr, "health-probe-bind-address", o.ProbeAddr,
 		"/healthz and /readyz listen on this host and port.")
+	fs.StringVar(&o.IssuerAddr, "issuer-bind-address", o.IssuerAddr,
+		"fiberd fetches OIDC discovery and the JSON Web Key Set from the HTTPS listener on this host and port.")
+	fs.StringVar(&o.TLSCertFile, "tls-cert-file", o.TLSCertFile,
+		"The issuer listener serves this PEM certificate for OIDC discovery and the JSON Web Key Set. It is required.")
+	fs.StringVar(&o.TLSKeyFile, "tls-private-key-file", o.TLSKeyFile,
+		"The PEM private key of --tls-cert-file. It is required.")
 }
 
-// Validate reports every problem in o before any API call. It runs the
-// grant Pod template checks, requires a valid namespace and parses the
-// probe address.
+// Validate reports every problem in o before any API call. It does not
+// read the certificate and key files, since NewManager reports a missing or
+// bad one with the real error.
 func (o *Options) Validate() error {
 	var errs []error
 	if err := o.Template.Validate(); err != nil {
@@ -114,21 +138,54 @@ func (o *Options) Validate() error {
 	} else if msgs := content.IsDNS1123Label(o.Namespace); len(msgs) > 0 {
 		errs = append(errs, fmt.Errorf("--namespace %q is not a valid namespace name: %s", o.Namespace, strings.Join(msgs, ", ")))
 	}
-	if err := validProbeAddr(o.ProbeAddr); err != nil {
+	if err := validIssuerRoot(o.Template.IssuerURL); err != nil {
 		errs = append(errs, err)
+	}
+	if err := validBindAddr("--health-probe-bind-address", o.ProbeAddr); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validBindAddr("--issuer-bind-address", o.IssuerAddr); err != nil {
+		errs = append(errs, err)
+	}
+	if o.TLSCertFile == "" {
+		errs = append(errs, errors.New("--tls-cert-file is required"))
+	}
+	if o.TLSKeyFile == "" {
+		errs = append(errs, errors.New("--tls-private-key-file is required"))
 	}
 	return utilerrors.NewAggregate(errs)
 }
 
-// validProbeAddr accepts a host and port whose port is a number from 0 to
-// 65535. An empty host listens on every address.
-func validProbeAddr(addr string) error {
+// validIssuerRoot requires an https issuer URL with nothing after the host,
+// since the listener speaks TLS only and core mounts discovery at the URL's
+// root. A URL the template checks already refuse is left to them.
+func validIssuerRoot(s string) error {
+	u, err := url.Parse(s)
+	if err != nil {
+		return nil //nolint:nilerr // The template check reports an unparsable URL.
+	}
+	if u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil
+	}
+	if u.Scheme == "http" {
+		return fmt.Errorf("--issuer-url %q must use https, since the controller serves it over TLS only", s)
+	}
+	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(s, "?#") {
+		return fmt.Errorf("--issuer-url %q must have no path, query or fragment, since discovery is served at its root", s)
+	}
+	return nil
+}
+
+// validBindAddr accepts a host and port whose port is a number from 0 to
+// 65535. An empty host listens on every address. name is the flag addr
+// came from.
+func validBindAddr(name, addr string) error {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("--health-probe-bind-address %q: %w", addr, err)
+		return fmt.Errorf("%s %q: %w", name, addr, err)
 	}
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return fmt.Errorf("--health-probe-bind-address %q: port %q is not a number from 0 to 65535", addr, port)
+		return fmt.Errorf("%s %q: port %q is not a number from 0 to 65535", name, addr, port)
 	}
 	return nil
 }

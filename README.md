@@ -9,7 +9,9 @@ The [design](./docs/design/controller.md) explains how the pieces fit.
 
 ## Install
 
-1. Apply the install with `kubectl apply -k config/default`. Every object in it is a built-in kind or a CRD, so one apply is enough.
+The cluster needs [cert-manager](https://cert-manager.io/docs/installation/) and its [csi-driver](https://cert-manager.io/docs/usage/csi-driver/) installed first. The controller and every grant Pod take their certificates from them, so neither starts without them.
+
+1. Apply the install with `kubectl apply -k config/default`. Every object in it is a built-in kind, a CRD or a cert-manager object, so one apply is enough.
 2. Edit the images in `config/samples/fiberd_v1alpha1_grantpolicy.yaml`, then create the GrantPolicy named default with `kubectl apply -f config/samples/fiberd_v1alpha1_grantpolicy.yaml`.
 3. Onboard each tenant namespace with the `config/tenant` component, as its [comment](./config/tenant/kustomization.yaml) shows.
 

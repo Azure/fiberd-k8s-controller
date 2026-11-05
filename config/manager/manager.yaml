@@ -1,6 +1,5 @@
 # Two replicas elect one leader to reconcile. Both sync their caches, so
-# the standby is ready to take over at once. The issuer URL is required.
-# It names a Service in fiberd-system that nothing serves yet.
+# the standby is ready to take over at once.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -47,12 +46,17 @@ spec:
         args:
         - --issuer-url=https://fiberd-k8s-controller.fiberd-system.svc:8443
         - --health-probe-bind-address=:8081
+        - --tls-cert-file=/var/run/fiberd/tls/tls.crt
+        - --tls-private-key-file=/var/run/fiberd/tls/tls.key
         env:
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
         ports:
+        - name: https
+          containerPort: 8443
+          protocol: TCP
         - name: probes
           containerPort: 8081
           protocol: TCP
@@ -80,3 +84,13 @@ spec:
           capabilities:
             drop:
             - ALL
+        volumeMounts:
+        - name: tls
+          mountPath: /var/run/fiberd/tls
+          readOnly: true
+      volumes:
+      # The container runs as one user, so the key needs no fsGroup.
+      # defaultMode stays at 0644 so user 65532 can read the root-owned files.
+      - name: tls
+        secret:
+          secretName: fiberd-k8s-controller-tls

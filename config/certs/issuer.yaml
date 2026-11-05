@@ -1,0 +1,12 @@
+# Namespaced, so it signs only in cert-manager. Its one job is the CA in
+# ca_certificate.yaml.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: fiberd-selfsigned
+  namespace: cert-manager
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: ca
+spec:
+  selfSigned: {}

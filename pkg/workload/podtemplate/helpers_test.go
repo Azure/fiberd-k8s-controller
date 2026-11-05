@@ -17,6 +17,9 @@ const (
 	testImage  = "ghcr.io/azure/fiberd:v0.4.0"
 	testUID    = "3f2a6c1e-8b9d-4e5f-a1b2-c3d4e5f6a7b8"
 	testLease  = 10 * time.Minute
+
+	// testServiceName is workload.ObjectName(testGrant()). This package cannot import pkg/workload, which imports it.
+	testServiceName = "fiberd-web"
 )
 
 var testDigest = "sha256:" + strings.Repeat("ab", 32)
@@ -59,7 +62,7 @@ func container(cg *v1alpha1.CapacityGrant) *corev1.Container {
 // mustBuild builds cg with opts and fails the test on an error.
 func mustBuild(t *testing.T, cg *v1alpha1.CapacityGrant, opts Options) corev1.PodTemplateSpec {
 	t.Helper()
-	tmpl, err := Build(cg, testImage, opts)
+	tmpl, err := Build(cg, testImage, testServiceName, opts)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

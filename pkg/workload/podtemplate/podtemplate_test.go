@@ -280,8 +280,24 @@ func TestBuildVolumes(t *testing.T) {
 	grantsVol := corev1.Volume{Name: "fiberd-grants", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 		Medium: corev1.StorageMediumMemory, SizeLimit: ptr.To(resource.MustParse("1Mi")),
 	}}}
+	// The attributes are literal so a typo in a key or value fails here.
+	tlsVol := corev1.Volume{Name: "fiberd-tls", VolumeSource: corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{
+		Driver:   "csi.cert-manager.io",
+		ReadOnly: ptr.To(true),
+		VolumeAttributes: map[string]string{
+			"csi.cert-manager.io/issuer-name":       "fiberd-ca",
+			"csi.cert-manager.io/issuer-kind":       "ClusterIssuer",
+			"csi.cert-manager.io/common-name":       "${POD_NAME}",
+			"csi.cert-manager.io/dns-names":         "fiberd-web.team-a.svc,fiberd-web.team-a.svc.cluster.local",
+			"csi.cert-manager.io/key-usages":        "server auth",
+			"csi.cert-manager.io/duration":          "24h",
+			"csi.cert-manager.io/renew-before":      "8h",
+			"csi.cert-manager.io/reuse-private-key": "false",
+		},
+	}}}
 	stateMount := corev1.VolumeMount{Name: "fiberd-state", MountPath: "/var/lib/fiberd"}
 	grantsMount := corev1.VolumeMount{Name: "fiberd-grants", MountPath: "/var/run/fiberd/grants"}
+	tlsMount := corev1.VolumeMount{Name: "fiberd-tls", MountPath: "/var/run/fiberd/tls", ReadOnly: true}
 	cases := []struct {
 		name        string
 		volumes     []corev1.Volume
@@ -291,29 +307,29 @@ func TestBuildVolumes(t *testing.T) {
 	}{
 		{
 			name:        "no tenant volumes",
-			wantVolumes: []corev1.Volume{stateVol, grantsVol},
-			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount},
+			wantVolumes: []corev1.Volume{stateVol, grantsVol, tlsVol},
+			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount, tlsMount},
 		},
 		{
 			name:        "tenant volumes come first",
 			volumes:     []corev1.Volume{tenantVolume},
 			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}, stateMount, grantsMount},
+			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol},
+			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}, stateMount, grantsMount, tlsMount},
 		},
 		{
 			name:        "a mount above fiberd's directories is allowed",
 			volumes:     []corev1.Volume{tenantVolume},
 			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}, stateMount, grantsMount},
+			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol},
+			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}, stateMount, grantsMount, tlsMount},
 		},
 		{
 			name:        "a sibling path with the same prefix is allowed",
 			volumes:     []corev1.Volume{tenantVolume},
 			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}, stateMount, grantsMount},
+			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol},
+			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}, stateMount, grantsMount, tlsMount},
 		},
 	}
 	for _, tc := range cases {
@@ -339,21 +355,22 @@ func TestBuildEnv(t *testing.T) {
 			FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: path},
 		}}
 	}
-	podEnv := []corev1.EnvVar{
+	overlayEnv := []corev1.EnvVar{
 		fieldEnv("POD_NAME", "metadata.name"),
 		fieldEnv("POD_NAMESPACE", "metadata.namespace"),
 		fieldEnv("POD_UID", "metadata.uid"),
+		{Name: "SSL_CERT_FILE", Value: "/var/run/fiberd/tls/ca.crt"},
 	}
 	cases := []struct {
 		name string
 		env  []corev1.EnvVar
 		want []corev1.EnvVar
 	}{
-		{name: "no tenant env", want: podEnv},
+		{name: "no tenant env", want: overlayEnv},
 		{
 			name: "tenant env comes first",
 			env:  []corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}},
-			want: append([]corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}}, podEnv...),
+			want: append([]corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}}, overlayEnv...),
 		},
 	}
 	for _, tc := range cases {
@@ -418,15 +435,17 @@ func TestBuildErrors(t *testing.T) {
 		PeriodSeconds: 7,
 	}
 	cases := []struct {
-		name    string
-		nilCG   bool
-		noImage bool
-		mod     grantMod
-		opts    func(*Options)
-		wantErr string
+		name      string
+		nilCG     bool
+		noImage   bool
+		noService bool
+		mod       grantMod
+		opts      func(*Options)
+		wantErr   string
 	}{
 		{name: "nil grant", nilCG: true, wantErr: "nil CapacityGrant"},
 		{name: "empty image", noImage: true, wantErr: "no resolved image"},
+		{name: "empty service name", noService: true, wantErr: "no Service name"},
 		// TestOptionsValidate covers each option. This case shows that Build
 		// returns what Validate finds.
 		{name: "invalid options", opts: func(o *Options) { o.IssuerURL = "" }, wantErr: "issuer URL is required"},
@@ -602,6 +621,13 @@ func TestBuildErrors(t *testing.T) {
 			name: "volume named fiberd-grants",
 			mod: podMod(func(s *corev1.PodSpec) {
 				s.Volumes = []corev1.Volume{{Name: "fiberd-grants", VolumeSource: emptyDir}}
+			}),
+			wantErr: "spec.podTemplate.spec.volumes[0].name",
+		},
+		{
+			name: "volume named fiberd-tls",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "fiberd-tls", VolumeSource: emptyDir}}
 			}),
 			wantErr: "spec.podTemplate.spec.volumes[0].name",
 		},
@@ -838,11 +864,15 @@ func TestBuildErrors(t *testing.T) {
 			if tc.noImage {
 				image = ""
 			}
+			service := testServiceName
+			if tc.noService {
+				service = ""
+			}
 			opts := testOptions()
 			if tc.opts != nil {
 				tc.opts(&opts)
 			}
-			_, err := Build(cg, image, opts)
+			_, err := Build(cg, image, service, opts)
 			if err == nil {
 				t.Fatalf("Build succeeded, want an error holding %q", tc.wantErr)
 			}

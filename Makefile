@@ -14,7 +14,7 @@ ENVTEST_BIN_DIR ?= $(CURDIR)/bin/envtest
 
 .DEFAULT_GOAL := help
 
-.PHONY: help manifests generate fmt vet lint test test-envtest tidy verify
+.PHONY: help manifests generate fmt vet lint test test-envtest kind-deps tidy verify
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,6 +43,9 @@ test:
 test-envtest:
 	assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_BIN_DIR) -p path)" && \
 		KUBEBUILDER_ASSETS="$$assets" $(GO) test -tags envtest -race -count=1 $(TESTFLAGS) ./test/envtest/...
+
+kind-deps:
+	hack/tests/kind/deps.sh
 
 tidy:
 	$(GO) mod tidy

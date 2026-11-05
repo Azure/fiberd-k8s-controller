@@ -14,6 +14,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
+	"github.com/Azure/fiberd-k8s-controller/pkg/workload"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
 )
 
@@ -72,7 +73,7 @@ func withGPU(cg *v1alpha1.CapacityGrant) {
 // testTemplate is what podtemplate.Build returns for cg.
 func testTemplate(t *testing.T, cg *v1alpha1.CapacityGrant) corev1.PodTemplateSpec {
 	t.Helper()
-	tmpl, err := podtemplate.Build(cg, testImage, podtemplate.Options{
+	tmpl, err := podtemplate.Build(cg, testImage, workload.ObjectName(cg), podtemplate.Options{
 		IssuerURL: "https://fiberd-k8s-controller.fiberd-system.svc",
 		Lease:     10 * time.Minute,
 	})

@@ -31,6 +31,8 @@ func main() {
 }
 
 // run validates o, builds the manager and runs it until SIGTERM or SIGINT.
+// The signal context is set up before NewManager, so SIGTERM during the
+// startup reads cancels them.
 func run(o *app.Options, args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("unexpected arguments %q", args)
@@ -42,9 +44,10 @@ func run(o *app.Options, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load the client configuration: %w", err)
 	}
-	mgr, err := app.NewManager(cfg, o)
+	ctx := ctrl.SetupSignalHandler()
+	mgr, err := app.NewManager(ctx, cfg, o)
 	if err != nil {
 		return err
 	}
-	return mgr.Start(ctrl.SetupSignalHandler())
+	return mgr.Start(ctx)
 }

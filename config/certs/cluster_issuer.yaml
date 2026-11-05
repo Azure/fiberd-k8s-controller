@@ -1,0 +1,11 @@
+# Cluster scoped, so grant Pods in any tenant namespace can request from it.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: fiberd-ca
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: ca
+spec:
+  ca:
+    secretName: fiberd-ca

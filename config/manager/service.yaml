@@ -1,0 +1,19 @@
+# Every replica serves discovery and the key set, so the Service selects all
+# of them, not only the leader.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fiberd-k8s-controller
+  namespace: fiberd-system
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: controller
+spec:
+  selector:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: controller
+  ports:
+  - name: https
+    port: 8443
+    targetPort: https
+    protocol: TCP
