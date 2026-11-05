@@ -3,6 +3,7 @@ package app
 import (
 	"flag"
 	"io"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Azure/fiberd/pkg/endpoint"
 
+	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
 )
 
@@ -63,6 +65,7 @@ func defaults(ns string) Options {
 		IssuerAddr:  ":8443",
 		TLSCertFile: testCertFile,
 		TLSKeyFile:  testKeyFile,
+		Limits:      issuer.RateLimits{PerIP: 50, Global: 100, PodInterval: 10 * time.Second},
 	}
 }
 
@@ -117,6 +120,9 @@ func TestAddFlags(t *testing.T) {
 				"--issuer-bind-address=127.0.0.1:9443",
 				"--tls-cert-file=/etc/fiberd/serving.crt",
 				"--tls-private-key-file=/etc/fiberd/serving.key",
+				"--grant-rate-per-ip=5.5",
+				"--grant-rate=20",
+				"--grant-pod-interval=1m",
 			},
 			want: func() Options {
 				return Options{
@@ -133,6 +139,7 @@ func TestAddFlags(t *testing.T) {
 					IssuerAddr:  "127.0.0.1:9443",
 					TLSCertFile: "/etc/fiberd/serving.crt",
 					TLSKeyFile:  "/etc/fiberd/serving.key",
+					Limits:      issuer.RateLimits{PerIP: 5.5, Global: 20, PodInterval: time.Minute},
 				}
 			},
 		},
@@ -354,6 +361,31 @@ func TestValidate(t *testing.T) {
 			mutate:     func(o *Options) { o.Template.IssuerURL = "fiberd-k8s-controller.fiberd-system.svc" },
 			wantErr:    []string{"absolute http or https URL"},
 			wantAbsent: []string{"must use https", "--issuer-url"},
+		},
+		{
+			name:    "a zero per-IP rate",
+			mutate:  func(o *Options) { o.Limits.PerIP = 0 },
+			wantErr: []string{"--grant-rate-per-ip must be a positive number"},
+		},
+		{
+			name:    "a negative global rate",
+			mutate:  func(o *Options) { o.Limits.Global = -1 },
+			wantErr: []string{"--grant-rate must be a positive number"},
+		},
+		{
+			name:    "a global rate of NaN",
+			mutate:  func(o *Options) { o.Limits.Global = math.NaN() },
+			wantErr: []string{"--grant-rate must be a positive number"},
+		},
+		{
+			name:    "an infinite per-IP rate",
+			mutate:  func(o *Options) { o.Limits.PerIP = math.Inf(1) },
+			wantErr: []string{"--grant-rate-per-ip must be a positive number"},
+		},
+		{
+			name:    "a zero Pod interval",
+			mutate:  func(o *Options) { o.Limits.PodInterval = 0 },
+			wantErr: []string{"--grant-pod-interval must be positive"},
 		},
 		{
 			name: "every problem is reported at once",

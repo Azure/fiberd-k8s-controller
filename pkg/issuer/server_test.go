@@ -11,12 +11,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	"github.com/google/go-cmp/cmp"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 
@@ -375,6 +378,38 @@ func TestServerTLSVersion(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestServerLogsHandshakesThroughItsContext proves net/http's own lines reach
+// the context's logger and not the standard logger on stderr, where no
+// verbosity could quiet them.
+func TestServerLogsHandshakesThroughItsContext(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	log := funcr.New(func(_, args string) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, args)
+	}, funcr.Options{Verbosity: 4})
+	pair := newPair(t)
+	s, err := issuer.NewServer(logr.NewContext(t.Context(), log), "127.0.0.1:0", issuerHandler(newRing(t)), pairGetter(t, pair))
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	startServer(t, s)
+
+	cfg := clientTLS(pair)
+	cfg.MaxVersion = tls.VersionTLS12
+	if conn, err := handshake(t.Context(), s.Addr().String(), cfg); err == nil {
+		_ = conn.Close()
+		t.Fatal("handshake succeeded, want a refusal")
+	}
+
+	waitFor(t, "the refused handshake to be logged", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "TLS handshake error") })
+	})
 }
 
 func TestServerHTTP2(t *testing.T) {

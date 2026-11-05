@@ -7,6 +7,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - pods
   - services
   verbs:
   - get
@@ -16,10 +17,17 @@ rules:
   - apps
   resources:
   - deployments
+  - replicasets
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
 - apiGroups:
   - events.k8s.io
   resources:

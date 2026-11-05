@@ -180,7 +180,7 @@ func (r *CapacityGrantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // The error lists every fault it found, for the grant's status.
 func (r *CapacityGrantReconciler) buildTemplate(cg *v1alpha1.CapacityGrant, now time.Time) (corev1.PodTemplateSpec, error) {
 	var errs []error
-	image := tenantImage(cg)
+	image := podtemplate.ImageOf(cg)
 	if image == "" {
 		errs = append(errs, field.Required(
 			field.NewPath("spec", "podTemplate", "spec", "containers").Key(podtemplate.ContainerName).Child("image"),
@@ -266,17 +266,6 @@ func sentence(msg string) string {
 		return msg
 	}
 	return msg + "."
-}
-
-// tenantImage returns the image the tenant set on the fiberd container of
-// cg, or an empty string when there is none.
-func tenantImage(cg *v1alpha1.CapacityGrant) string {
-	for _, c := range cg.Spec.PodTemplate.Spec.Containers {
-		if c.Name == podtemplate.ContainerName {
-			return c.Image
-		}
-	}
-	return ""
 }
 
 // forbiddenMessage explains a Forbidden apply in namespace. A missing

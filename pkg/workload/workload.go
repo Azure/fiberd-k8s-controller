@@ -1,18 +1,21 @@
 // Package workload is the seam between the CapacityGrant reconciler and the
 // objects that run a grant's Pods.
 //
-// A Workload reads what runs a grant and applies what should run it. The
-// reconciler builds the Pod template with package podtemplate and never
-// names a workload kind itself, so a later kind, such as a LeaderWorkerSet,
-// is a second implementation of the same two methods. Package deployment
-// holds the one implementation, a Deployment with a Service in front.
+// A Workload reads what runs a grant, applies what should run it, and
+// traces a Pod back to its grant. The reconciler builds the Pod template
+// with package podtemplate and never names a workload kind itself, so a
+// later kind, such as a LeaderWorkerSet, is a second implementation of the
+// same three methods. Package deployment holds the one implementation, a
+// Deployment with a Service in front.
 package workload
 
 import (
 	"context"
+	"errors"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
@@ -21,6 +24,9 @@ import (
 // the controller creates for a grant. The CRD caps grant names at 56
 // characters, so the name still fits a Service name.
 const objectNamePrefix = "fiberd-"
+
+// ErrNotOwned is a Pod whose owners do not lead to a CapacityGrant.
+var ErrNotOwned = errors.New("the Pod is not owned by a CapacityGrant")
 
 // Workload runs the Pods of a grant.
 type Workload interface {
@@ -33,6 +39,12 @@ type Workload interface {
 	// they are absent. It returns the API error unchanged in its chain, so
 	// the caller can tell a forbidden request from any other.
 	Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec) error
+
+	// GrantOf returns the CapacityGrant that pod's owners lead to. Each
+	// object comes from r, so the caller chooses between the cache and a
+	// live read. A chain that breaks anywhere wraps ErrNotOwned. A failed
+	// read does not, so a caller can tell an outage from a stranger.
+	GrantOf(ctx context.Context, r client.Reader, pod *corev1.Pod) (*v1alpha1.CapacityGrant, error)
 }
 
 // Observation is what a Workload found for a grant.

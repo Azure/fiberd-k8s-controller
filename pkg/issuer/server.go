@@ -5,13 +5,17 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -26,12 +30,15 @@ const (
 )
 
 // shutdownTimeout bounds how long a stopping Server waits for open
-// connections. Discovery and JWKS answers are small, so a longer wait only
-// delays the Pod's exit.
+// connections. A grant request ends within requestTimeout, so a longer wait
+// only delays the Pod's exit.
 const shutdownTimeout = 10 * time.Second
 
-// Server serves the issuer's discovery and JWKS over TLS 1.3 as a manager
-// Runnable on every replica.
+// tlsHandshakeError starts the line net/http logs for a refused handshake.
+const tlsHandshakeError = "http: TLS handshake error"
+
+// Server serves the handler NewServer is given, the issuer's discovery, JWKS
+// and grant routes, over TLS 1.3 as a manager Runnable on every replica.
 type Server struct {
 	inner manager.Server
 
@@ -50,7 +57,7 @@ var (
 // manager starts, as controller-runtime's own probe and metrics listeners
 // do. getCertificate answers every handshake, so a certwatcher behind it
 // rotates the certificate without a restart. ctx is the base context of
-// every request.
+// every request, and its logger takes what net/http reports.
 func NewServer(ctx context.Context, addr string, handler http.Handler, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) (*Server, error) {
 	if handler == nil || getCertificate == nil {
 		return nil, errors.New("issuer: the server needs a handler and a certificate getter")
@@ -67,6 +74,7 @@ func NewServer(ctx context.Context, addr string, handler http.Handler, getCertif
 		MaxHeaderBytes:    1 << 20,
 		IdleTimeout:       90 * time.Second,
 		ReadHeaderTimeout: 32 * time.Second,
+		ErrorLog:          log.New(serverLog{log: logf.FromContext(ctx)}, "", 0),
 	}
 	return &Server{
 		inner: manager.Server{
@@ -89,6 +97,24 @@ func serverTLS(getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, erro
 		GetCertificate: getCertificate,
 		NextProtos:     []string{"h2", "http/1.1"},
 	}
+}
+
+// serverLog takes the lines net/http writes to its ErrorLog. Any client can
+// fail a handshake, and no limit runs before one, so those lines stay below
+// the default verbosity or a flood of them becomes a flood of log lines.
+type serverLog struct {
+	log logr.Logger
+}
+
+// Write logs one line of net/http's.
+func (w serverLog) Write(p []byte) (int, error) {
+	line := strings.TrimRight(string(p), "\n")
+	if strings.HasPrefix(line, tlsHandshakeError) {
+		w.log.V(quietVerbosity).Info(line)
+	} else {
+		w.log.Error(nil, line)
+	}
+	return len(p), nil
 }
 
 // NeedLeaderElection is false because every replica must serve discovery

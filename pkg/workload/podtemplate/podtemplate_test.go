@@ -295,9 +295,17 @@ func TestBuildVolumes(t *testing.T) {
 			"csi.cert-manager.io/reuse-private-key": "false",
 		},
 	}}}
+	tokenVol := corev1.Volume{Name: "fiberd-grant-token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+		Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+			Audience:          testIssuer,
+			ExpirationSeconds: ptr.To[int64](600),
+			Path:              "token",
+		}}},
+	}}}
 	stateMount := corev1.VolumeMount{Name: "fiberd-state", MountPath: "/var/lib/fiberd"}
 	grantsMount := corev1.VolumeMount{Name: "fiberd-grants", MountPath: "/var/run/fiberd/grants"}
 	tlsMount := corev1.VolumeMount{Name: "fiberd-tls", MountPath: "/var/run/fiberd/tls", ReadOnly: true}
+	tokenMount := corev1.VolumeMount{Name: "fiberd-grant-token", MountPath: "/var/run/secrets/fiberd.io/grant", ReadOnly: true}
 	cases := []struct {
 		name        string
 		volumes     []corev1.Volume
@@ -307,29 +315,29 @@ func TestBuildVolumes(t *testing.T) {
 	}{
 		{
 			name:        "no tenant volumes",
-			wantVolumes: []corev1.Volume{stateVol, grantsVol, tlsVol},
-			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount, tlsMount},
+			wantVolumes: []corev1.Volume{stateVol, grantsVol, tlsVol, tokenVol},
+			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount, tlsMount, tokenMount},
 		},
 		{
 			name:        "tenant volumes come first",
 			volumes:     []corev1.Volume{tenantVolume},
 			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}, stateMount, grantsMount, tlsMount},
+			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol, tokenVol},
+			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}, stateMount, grantsMount, tlsMount, tokenMount},
 		},
 		{
 			name:        "a mount above fiberd's directories is allowed",
 			volumes:     []corev1.Volume{tenantVolume},
 			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}, stateMount, grantsMount, tlsMount},
+			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol, tokenVol},
+			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}, stateMount, grantsMount, tlsMount, tokenMount},
 		},
 		{
 			name:        "a sibling path with the same prefix is allowed",
 			volumes:     []corev1.Volume{tenantVolume},
 			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}, stateMount, grantsMount, tlsMount},
+			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol, tokenVol},
+			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}, stateMount, grantsMount, tlsMount, tokenMount},
 		},
 	}
 	for _, tc := range cases {
@@ -632,6 +640,13 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.podTemplate.spec.volumes[0].name",
 		},
 		{
+			name: "volume named fiberd-grant-token",
+			mod: podMod(func(s *corev1.PodSpec) {
+				s.Volumes = []corev1.Volume{{Name: "fiberd-grant-token", VolumeSource: emptyDir}}
+			}),
+			wantErr: "spec.podTemplate.spec.volumes[0].name",
+		},
+		{
 			name: "hostPath volume",
 			mod: podMod(func(s *corev1.PodSpec) {
 				s.Volumes = []corev1.Volume{{Name: "host", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/"}}}}
@@ -679,6 +694,13 @@ func TestBuildErrors(t *testing.T) {
 			name: "mount under the grants path",
 			mod: ctrMod(func(c *corev1.Container) {
 				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/var/run/fiberd/grants/x"}}
+			}),
+			wantErr: "spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath",
+		},
+		{
+			name: "mount over the grant token path",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/var/run/secrets/fiberd.io/grant"}}
 			}),
 			wantErr: "spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath",
 		},

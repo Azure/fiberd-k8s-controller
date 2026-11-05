@@ -64,21 +64,23 @@ A Deployment's Pods are named only once they exist, so each Pod asks for its own
 
 ![The kubelet mounts a projected token whose audience is the issuer URL. The home sends it to the controller over HTTPS. The controller runs a TokenReview, reads the Pod and walks its owners up to the CapacityGrant, signs a grant whose UID is the Pod UID and whose audience is the Pod name, and returns it with its expiry. The home writes it to the memory-backed directory and delivers it to fiberd, which fetches the key set, verifies the grant and warms the zygote. The home then sets the zygote-ready Pod condition. Every half lease the home renews, the controller re-signs the same claims with a new expiry, and the home delivers the renewed grant.](../images/controller-grant-fetch.svg)
 
-**The token.** The Pod mounts a projected service-account token bound to the Pod, with the issuer URL as audience. The API server honours it briefly after the Pod is deleted, so the controller refuses a terminating Pod itself.
+**The token.** The Pod mounts a projected service-account token bound to the Pod, with the issuer URL as its only audience. fiberd hides its directory from fibers. The API server honours it briefly after the Pod is deleted, so the controller refuses a terminating Pod itself.
 
-**The checks.** The TokenReview must confirm the `fiberd-grant` account of the Pod's namespace, and the Pod's name and UID must match.
+**The checks.** The TokenReview must confirm the `fiberd-grant` account of the Pod's namespace and a token bound to a Pod, and the Pod's name and UID must match.
+
+**Refusals.** Each refusal names one reason a machine can read. A token that fails names only that it failed, and a missing Pod answers like a Pod of another UID, so a refusal never reveals whether another object exists. Limits per client address, across all clients and per Pod answer 429 with `Retry-After`. Each replica counts on its own, and the flags are `--grant-rate-per-ip`, `--grant-rate` and `--grant-pod-interval`.
 
 **The lineage.** The walk from Pod to CapacityGrant compares owner UIDs. Labels are mutable, so they are only a consistency check.
 
 **The grant.** Its UID is the Pod UID and its tenant the namespace. The lease is a controller setting, and the rest comes from the spec. A Pod UID is never reused, so a replacement Pod's fibers never collide with the old Pod's fiber identities.
 
-**Superseded revisions.** In a rollout the old Pod keeps renewing its own grant, so a stuck rollout never expires a healthy Pod. Only the first grant for a Pod requires its Pod-template hash to match the current spec.
+**Superseded revisions.** In a rollout the old Pod keeps renewing its own grant, so a stuck rollout never expires a healthy Pod. Only the first grant for a Pod requires its Pod-template hash to match the current spec. Every replica answers while only the leader reconciles, so a replica checks a mismatch against the API server before it refuses.
 
 **Renewal.** The home renews at half lease and backs off as the server asks. It stops once refused with a conflict, such as a terminating Pod or a deleting CapacityGrant. A restarted fiberd keeps the grant and serves while it retries.
 
-**Controller outage.** In a full outage the current grant serves until its lease ends. fiberd tolerates a stale key set for one lease, so both lapse together. Then the grant yields, its fibers end and new requests are refused.
+**Controller outage.** In a full outage the current grant serves until its lease ends. fiberd tolerates a stale key set for one lease, so both lapse together. Then the grant yields, its fibers end and new requests are refused. A new Pod waits a minute for its first grant, then exits and the kubelet restarts it.
 
-How a tenant's caller obtains the grant it presents with each request is not yet settled.
+A tenant's caller will fetch one grant per Pod from the same listener, with the client certificate the CapacityGrant names. That route is not built yet.
 
 ## Security
 
@@ -86,13 +88,13 @@ The tenant owns the Pod. The image allowlist is what makes the fiberd binary tru
 
 | Concern | How it is met |
 | --- | --- |
-| TLS | One fiberd CA comes from cert-manager. Its csi-driver issues each grant Pod a serving certificate. fiberd serves mutual TLS only and trusts that CA for clients. Callers dial the Service name and present a client certificate. A self-signed issuer signs that CA once for ten years, and its key does not rotate. The controller serves HTTPS only, with TLS 1.3 at least and no client certificate, since the discovery document and key set are public. Its certificate comes from the same CA, lives a day and is reloaded on renewal without a restart. fiberd trusts the controller through the CA file in its csi volume, and the public roots in its image stay trusted beside it. |
+| TLS | One fiberd CA comes from cert-manager. Its csi-driver issues each grant Pod a serving certificate. fiberd serves mutual TLS only and trusts that CA for clients. Callers dial the Service name and present a client certificate. A self-signed issuer signs that CA once for ten years, and its key does not rotate. The controller serves HTTPS only, with TLS 1.3 at least and no client certificate, since the discovery document and key set are public and a grant Pod proves itself with its token. Its certificate comes from the same CA, lives a day and is reloaded on renewal without a restart. fiberd trusts the controller through the CA file in its csi volume, and the public roots in its image stay trusted beside it. |
 | Bound grants | `callerThumbprint` puts one caller's certificate thumbprint into the grant. fiberd refuses the grant over any other certificate, so a copied grant is worthless. Replicas of one caller share a certificate and so share the grant. |
 | Least privilege per runtime | Every runtime drops all capabilities and adds back the set fiberd core measured for it. proc and runc also get a seccomp profile written for fiberd. AppArmor stays unconfined for now. A privileged container is allowed only in namespaces the `GrantPolicy` lists. |
 | CRD rules | CEL rules on the CRD fix the Pod's shape. The template has one container named `fiberd` and no init or ephemeral containers. It sets no service account, node name or host namespaces. The rules also refuse what the overlay cannot reset. That is probes, lifecycle hooks, `envFrom`, Pod-level resources, host aliases, DNS config, the runtime class, and SELinux and Windows options. The `fiberd` container must set a memory limit. |
 | Admission policy | A policy reads the `GrantPolicy` named `default` and fails closed, so every CapacityGrant write is refused while it is missing. Args may name only the fiberd flags a tenant sets. The image must carry a digest and come from a listed repository, and the runtime must be listed. The policy refuses reserved labels and annotations, volume sources outside its allowlist, and projected service account tokens. It refuses mounts over fiberd's directories, the trust roots and the resolver files, and env that changes fiberd's trust. A privileged container and the gvisor and hyperlight runtimes need a listed namespace. A second policy keeps `default` from being deleted. Only the author role may create CapacityGrants. |
 | Pod Security | A grant Pod needs SYS_ADMIN and SYS_PTRACE and runs with Unconfined AppArmor and seccomp, which exceeds the `baseline` level, so a namespace that hosts grant Pods enforces `privileged` and the admission policy is the guard there. That label admits any privileged Pod, so tenants who may create Pods directly should not share a namespace with grant Pods. |
-| Grants stay inside the Pod | No grant is an API object or a Secret. The home writes it into a memory-backed grants directory that fibers cannot see. Tenants need no `secrets` access, and `fiberd-grant` can read no Secret. |
+| Grants stay inside the Pod | No grant is an API object or a Secret. The home writes it into a memory-backed grants directory that fibers cannot see. Tenants need no `secrets` access, and `fiberd-grant` can read no Secret. The controller logs no token or grant, at any verbosity. |
 | Signing keys | The keys live in one Secret in the controller's namespace. The key set publishes every key still needed, so grants signed before a rotation verify until they expire. |
 
 ## What rolls a Pod

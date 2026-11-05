@@ -60,6 +60,16 @@ const (
 	tlsDir          = "/var/run/fiberd/tls"
 	caFile          = tlsDir + "/ca.crt"
 
+	grantTokenVolume = "fiberd-grant-token"
+	grantTokenDir    = "/var/run/secrets/fiberd.io/grant"
+	grantTokenPath   = "token"
+	grantTokenFile   = grantTokenDir + "/" + grantTokenPath
+
+	// grantTokenSeconds is the shortest life the API server allows. The
+	// kubelet refreshes the token well before then, and fiberd rereads the
+	// file for every request, so a short life costs nothing.
+	grantTokenSeconds int64 = 600
+
 	// rootfsDir is where the runc and gVisor images keep the rootfs their
 	// sandboxes run in.
 	rootfsDir = "/usr/share/fiberd/rootfs"
@@ -137,7 +147,7 @@ var (
 
 // ownedVolumes are the overlay's volumes. A test keeps them equal to the
 // policy's ownedVolumes.
-var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume}
+var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume, grantTokenVolume}
 
 // reservedKeyPrefixes start the template label and annotation keys a tenant
 // may not set. fiberd.io keys are the controller's. The AppArmor and seccomp
@@ -211,7 +221,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	}
 	overlayMeta(&tmpl.ObjectMeta, cg, grantHash)
 	overlayPodSpec(&tmpl.Spec, opts.ServiceAccount)
-	addVolumes(&tmpl.Spec, cg, serviceName)
+	addVolumes(&tmpl.Spec, cg, serviceName, opts.IssuerURL)
 
 	c.Image = image
 	c.Env = append(c.Env, podEnv()...)
@@ -222,6 +232,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 		corev1.VolumeMount{Name: stateVolume, MountPath: stateDir},
 		corev1.VolumeMount{Name: grantsVolume, MountPath: grantsDir},
 		corev1.VolumeMount{Name: tlsVolume, MountPath: tlsDir, ReadOnly: true},
+		corev1.VolumeMount{Name: grantTokenVolume, MountPath: grantTokenDir, ReadOnly: true},
 	)
 	setProbes(c)
 	c.Resources = resources
@@ -461,7 +472,7 @@ func caEnv() corev1.EnvVar {
 // checkVolumes refuses tenant volumes, mounts and devices that collide
 // with the overlay's volumes, or that replace the system trust roots and
 // resolver files. A tenant mount of an overlay volume would expose
-// fiberd's keys, grants or certificate elsewhere. A tenant mount at or
+// fiberd's keys, grants, certificate or token elsewhere. A tenant mount at or
 // under an overlay directory would replace part of what fiberd keeps
 // there. The trust roots decide which issuer fiberd believes and the
 // resolver files where its name points, and nothing of the controller's
@@ -570,9 +581,10 @@ func trustPath(p string) (string, bool) {
 }
 
 // addVolumes adds fiberd's state directory, the in-memory directory the
-// home reads grants from and the tls volume. Grants are bearer tokens
-// until mutual TLS binds them, so they never touch the node's disk.
-func addVolumes(spec *corev1.PodSpec, cg *v1alpha1.CapacityGrant, serviceName string) {
+// home reads grants from, the tls volume and the token the home fetches its
+// grant with. Grants are bearer tokens until mutual TLS binds them, so they
+// never touch the node's disk.
+func addVolumes(spec *corev1.PodSpec, cg *v1alpha1.CapacityGrant, serviceName, issuerURL string) {
 	spec.Volumes = append(spec.Volumes,
 		corev1.Volume{Name: stateVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		corev1.Volume{Name: grantsVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
@@ -580,7 +592,21 @@ func addVolumes(spec *corev1.PodSpec, cg *v1alpha1.CapacityGrant, serviceName st
 			SizeLimit: ptr.To(resource.MustParse(grantsSizeLimit)),
 		}}},
 		tlsCSIVolume(cg, serviceName),
+		grantToken(issuerURL),
 	)
+}
+
+// grantToken projects a token bound to the Pod, whose only audience is the
+// issuer, so it opens nothing else if it leaks. fiberd hides its directory
+// from fibers.
+func grantToken(issuerURL string) corev1.Volume {
+	return corev1.Volume{Name: grantTokenVolume, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+		Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+			Audience:          issuerURL,
+			ExpirationSeconds: ptr.To(grantTokenSeconds),
+			Path:              grantTokenPath,
+		}}},
+	}}}
 }
 
 // tlsCSIVolume asks the csi-driver for a certificate that names the grant's

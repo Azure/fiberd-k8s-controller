@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/Azure/fiberd/pkg/endpoint"
 
+	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
 )
 
@@ -40,6 +42,16 @@ const (
 	// defaultIssuerAddr is where discovery and the key set are served over
 	// HTTPS.
 	defaultIssuerAddr = ":8443"
+
+	// defaultRatePerIP and defaultRate are requests per second. A Pod asks
+	// once per half lease, so the global limit carries far more Pods than
+	// one cluster runs and only a first start of many Pods comes near it.
+	defaultRatePerIP = 50
+	defaultRate      = 100
+
+	// defaultPodInterval is the time one Pod earns one more grant in. It is
+	// long against a renewal and short against a crash loop.
+	defaultPodInterval = 10 * time.Second
 
 	// envPodNamespace names the downward API variable that gives the
 	// controller its own namespace.
@@ -72,6 +84,9 @@ type Options struct {
 
 	// TLSKeyFile is the PEM private key of TLSCertFile.
 	TLSKeyFile string
+
+	// Limits bounds how often the grant route answers.
+	Limits issuer.RateLimits
 }
 
 // NewOptions returns every option at its default. The namespace comes from
@@ -91,6 +106,11 @@ func NewOptions() *Options {
 		LeaderElect: true,
 		ProbeAddr:   defaultProbeAddr,
 		IssuerAddr:  defaultIssuerAddr,
+		Limits: issuer.RateLimits{
+			PerIP:       defaultRatePerIP,
+			Global:      defaultRate,
+			PodInterval: defaultPodInterval,
+		},
 	}
 }
 
@@ -118,11 +138,17 @@ func (o *Options) AddFlags(fs *flag.FlagSet) {
 	fs.StringVar(&o.ProbeAddr, "health-probe-bind-address", o.ProbeAddr,
 		"/healthz and /readyz listen on this host and port.")
 	fs.StringVar(&o.IssuerAddr, "issuer-bind-address", o.IssuerAddr,
-		"fiberd fetches OIDC discovery and the JSON Web Key Set from the HTTPS listener on this host and port.")
+		"fiberd fetches OIDC discovery, the JSON Web Key Set and its grant from the HTTPS listener on this host and port.")
 	fs.StringVar(&o.TLSCertFile, "tls-cert-file", o.TLSCertFile,
 		"The issuer listener serves this PEM certificate for OIDC discovery and the JSON Web Key Set. It is required.")
 	fs.StringVar(&o.TLSKeyFile, "tls-private-key-file", o.TLSKeyFile,
 		"The PEM private key of --tls-cert-file. It is required.")
+	fs.Float64Var(&o.Limits.PerIP, "grant-rate-per-ip", o.Limits.PerIP,
+		"Each replica answers one client address this many grant requests per second.")
+	fs.Float64Var(&o.Limits.Global, "grant-rate", o.Limits.Global,
+		"Each replica answers this many grant requests per second from all clients together.")
+	fs.DurationVar(&o.Limits.PodInterval, "grant-pod-interval", o.Limits.PodInterval,
+		"Each replica lets one Pod earn one more grant request in this time, after a small burst.")
 }
 
 // Validate reports every problem in o before any API call. It does not
@@ -153,7 +179,25 @@ func (o *Options) Validate() error {
 	if o.TLSKeyFile == "" {
 		errs = append(errs, errors.New("--tls-private-key-file is required"))
 	}
+	if err := validRate("--grant-rate-per-ip", o.Limits.PerIP); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validRate("--grant-rate", o.Limits.Global); err != nil {
+		errs = append(errs, err)
+	}
+	if o.Limits.PodInterval <= 0 {
+		errs = append(errs, fmt.Errorf("--grant-pod-interval must be positive, got %s", o.Limits.PodInterval))
+	}
 	return utilerrors.NewAggregate(errs)
+}
+
+// validRate accepts a positive, finite number of requests per second. The
+// flag package parses NaN and Inf, and a limit of either bounds nothing.
+func validRate(name string, perSecond float64) error {
+	if !(perSecond > 0) || math.IsInf(perSecond, 1) {
+		return fmt.Errorf("%s must be a positive number, got %v", name, perSecond)
+	}
+	return nil
 }
 
 // validIssuerRoot requires an https issuer URL with nothing after the host,
