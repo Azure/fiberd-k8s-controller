@@ -28,6 +28,7 @@ const (
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",message="helperImage is allowed only for runtime hyperlight",fieldPath=".helperImage",reason="FieldValueForbidden"
 // +kubebuilder:validation:XValidation:rule="!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",message="runtime hyperlight needs helperImage, fiberd does not start without its helper",fieldPath=".helperImage",reason="FieldValueRequired"
+// +kubebuilder:validation:XValidation:rule="!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight'",message="zygote.registry is not allowed for runtime hyperlight, which does not run a pulled zygote yet",fieldPath=".zygote.registry",reason="FieldValueForbidden"
 type CapacityGrantSpec struct {
 	// zygote is the program every fiber of the grant is cloned from.
 	// +required
@@ -115,7 +116,8 @@ type ZygoteSpec struct {
 
 	// registry is the OCI repository fiberd pulls the zygote artifact from by digest, such
 	// as ghcr.io/team-a/zygotes, or http://registry.local:5000/zygotes for plain HTTP. It
-	// is the value of fiberd's -registry flag.
+	// is the value of fiberd's -registry flag. Runtime hyperlight does not take it yet, since
+	// its helper would not run the pulled executable.
 	// +optional
 	// +kubebuilder:validation:MaxLength=255
 	// +kubebuilder:validation:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`

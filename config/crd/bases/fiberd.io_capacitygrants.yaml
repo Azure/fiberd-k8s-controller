@@ -9074,7 +9074,8 @@ spec:
                     description: |-
                       registry is the OCI repository fiberd pulls the zygote artifact from by digest, such
                       as ghcr.io/team-a/zygotes, or http://registry.local:5000/zygotes for plain HTTP. It
-                      is the value of fiberd's -registry flag.
+                      is the value of fiberd's -registry flag. Runtime hyperlight does not take it yet, since
+                      its helper would not run the pulled executable.
                     maxLength: 255
                     pattern: ^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$
                     type: string
@@ -9109,6 +9110,12 @@ spec:
                 without its helper
               reason: FieldValueRequired
               rule: '!has(self.runtime) || self.runtime != ''hyperlight'' || has(self.helperImage)'
+            - fieldPath: .zygote.registry
+              message: zygote.registry is not allowed for runtime hyperlight, which
+                does not run a pulled zygote yet
+              reason: FieldValueForbidden
+              rule: '!has(self.zygote.registry) || !has(self.runtime) || self.runtime
+                != ''hyperlight'''
           status:
             description: status is the observed state of the grant.
             properties:

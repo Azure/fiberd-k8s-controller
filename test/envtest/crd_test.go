@@ -241,6 +241,22 @@ func TestCRDValidation(t *testing.T) {
 			mutate: setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes", "sealKeySecretName": "fleet-seal"}),
 		},
 		{
+			name: "a registry zygote on runtime runc is accepted",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "runc")
+				setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes"})(t, u)
+			},
+		},
+		{
+			name: "a registry zygote on runtime hyperlight",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "hyperlight")
+				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
+				setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes"})(t, u)
+			},
+			wantErr: "zygote.registry is not allowed for runtime hyperlight",
+		},
+		{
 			name:    "a zygote with a command and a registry",
 			mutate:  setZygote(map[string]any{"command": []any{"/z"}, "registry": "ghcr.io/team-a/zygotes"}),
 			wantErr: "exactly one of zygote.command and zygote.registry must be set",

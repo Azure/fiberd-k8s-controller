@@ -152,10 +152,11 @@ var podTemplateRules = []string{
 	"!has(self.spec) || ((!has(self.spec.securityContext) || (!has(self.spec.securityContext.seLinuxOptions) && !has(self.spec.securityContext.windowsOptions))) && (self.spec.containers.size() == 0 || !has(self.spec.containers[0].securityContext) || (!has(self.spec.containers[0].securityContext.seLinuxOptions) && !has(self.spec.containers[0].securityContext.windowsOptions))))",
 }
 
-// helperImageRules are the CEL rules on spec, in marker order.
-var helperImageRules = []string{
+// specRules are the CEL rules on spec, in marker order.
+var specRules = []string{
 	"!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",
 	"!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",
+	"!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight'",
 }
 
 // warmRule is the CEL rule on spec.fibers.
@@ -185,9 +186,9 @@ func TestCapacityGrantSchema(t *testing.T) {
 			required: []string{"zygote", "fibers", "podTemplate"},
 		},
 		{
-			name:               "spec carries the helperImage rules",
+			name:               "spec carries the runtime rules",
 			path:               "spec",
-			rules:              helperImageRules,
+			rules:              specRules,
 			rulesNeedFieldPath: true,
 		},
 		{

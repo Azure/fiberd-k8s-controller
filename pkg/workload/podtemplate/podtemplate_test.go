@@ -711,6 +711,14 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.zygote.registry: Invalid value",
 		},
 		{
+			name: "zygote registry on runtime hyperlight",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, v1alpha1.RuntimeHyperlight)
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z"}
+			},
+			wantErr: "spec.zygote.registry: Forbidden",
+		},
+		{
 			name: "zygote registry stored with an https scheme",
 			mod: func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "https://ghcr.io/a/z"}
