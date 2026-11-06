@@ -288,10 +288,12 @@ func retryAfterSeconds(d time.Duration) string {
 	return strconv.FormatInt(int64(math.Ceil(d.Seconds())), 10)
 }
 
-// respondJSON writes v as the answer. A failed write is a client that went
-// away, so there is nobody to tell.
+// respondJSON writes v as the answer. A grant is a credential, so no cache may
+// keep an answer. A failed write is a client that went away, so there is
+// nobody to tell.
 func respondJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

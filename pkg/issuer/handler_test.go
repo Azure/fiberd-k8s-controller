@@ -178,6 +178,9 @@ func TestRouteRefusals(t *testing.T) {
 			if got := w.Header().Get("Content-Type"); got != "application/json" {
 				t.Errorf("Content-Type = %q, want application/json", got)
 			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
 			for k, v := range tc.wantHeader {
 				if got := w.Header().Get(k); got != v {
 					t.Errorf("header %s = %q, want %q", k, got, v)
