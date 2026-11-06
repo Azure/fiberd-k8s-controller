@@ -7,13 +7,13 @@
 // what fiberd needs to run as a grant home. That is the labels the
 // controller selects on, the service account, the readiness gate, fiberd's
 // volumes, service links, the image, the Pod identity, the trusted CA file, the
-// gRPC port, the fiberd flags, the probes, Guaranteed resources, the
+// gRPC port, the fiberd flags, the probes, the resources, the
 // security context of the runtime and, for hyperlight, the init container
 // that installs the helper. Where a tenant field would collide
 // with the overlay, such as a volume of the same name or a probe, Build
 // refuses the grant instead of picking a winner silently. It refuses
-// Pod-level resources too, since they would break the Guaranteed QoS
-// class.
+// Pod-level resources too, since they would size the Pod and set its QoS
+// class in place of the fiberd container.
 //
 // The Pod runs fiberd's own image, whose entrypoint runs fiberd under tini.
 // The first controller flag, -home=kubernetes, selects the Kubernetes home
@@ -218,7 +218,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	errs = append(errs, checkEnv(cPath.Child("env"), c.Env)...)
 	errs = append(errs, checkPorts(cPath.Child("ports"), c.Ports)...)
 	errs = append(errs, checkProbes(cPath, c)...)
-	resources, rErrs := guaranteed(cPath.Child("resources"), c.Resources, opts.DefaultCPU)
+	resources, rErrs := sizeResources(cPath.Child("resources"), c.Resources, opts.DefaultCPU)
 	errs = append(errs, rErrs...)
 	if len(errs) > 0 {
 		return corev1.PodTemplateSpec{}, errs.ToAggregate()
@@ -343,7 +343,7 @@ func checkShape(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 		errs = append(errs, field.Forbidden(fld.Child("hostUsers"), "set by the controller"))
 	}
 	if spec.Resources != nil {
-		errs = append(errs, field.Forbidden(fld.Child("resources"), "the controller sizes the Pod through the fiberd container, and Pod-level resources would break its Guaranteed QoS class"))
+		errs = append(errs, field.Forbidden(fld.Child("resources"), "the controller sizes the Pod through the fiberd container, and Pod-level resources would set its QoS class in its place"))
 	}
 	return errs
 }

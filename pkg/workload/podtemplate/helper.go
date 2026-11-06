@@ -67,9 +67,11 @@ func checkHelperImage(fld *field.Path, rt v1alpha1.Runtime, image string) field.
 // free, because the helper runs in the fiberd container. It copies the
 // whole directory, which brings the guest along when the image has one.
 //
-// The init container has the fiberd container's CPU and memory, which
-// keeps the Pod Guaranteed without raising its requests, since the Pod's
-// request is the larger of an init container's and the sum of the others.
+// The init container has the fiberd container's CPU and memory requests
+// and limits, so it has a CPU limit only when fiberd does. Matching them
+// leaves the Pod's QoS class as the fiberd container sets it without
+// raising its requests, since the Pod's request is the larger of an init
+// container's and the sum of the others.
 // It takes no extended resource or claim, which would hand it the grant's
 // devices.
 //
@@ -89,15 +91,20 @@ func addHelper(spec *corev1.PodSpec, c *corev1.Container, rt v1alpha1.Runtime, i
 			SizeLimit: ptr.To(resource.MustParse(helperSizeLimit)),
 		}},
 	})
-	sized := corev1.ResourceList{}
+	limits, requests := corev1.ResourceList{}, corev1.ResourceList{}
 	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
-		sized[name] = c.Resources.Limits[name].DeepCopy()
+		if q, ok := c.Resources.Limits[name]; ok {
+			limits[name] = q.DeepCopy()
+		}
+		if q, ok := c.Resources.Requests[name]; ok {
+			requests[name] = q.DeepCopy()
+		}
 	}
 	spec.InitContainers = append(spec.InitContainers, corev1.Container{
 		Name:      helperContainer,
 		Image:     image,
 		Command:   []string{"cp", "-R", helperImageDir + "/.", helperDir},
-		Resources: corev1.ResourceRequirements{Limits: sized, Requests: sized.DeepCopy()},
+		Resources: corev1.ResourceRequirements{Limits: limits, Requests: requests},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: helperVolume, MountPath: helperDir},
 			{Name: helperVolume, MountPath: serviceAccountTokenDir, ReadOnly: true},

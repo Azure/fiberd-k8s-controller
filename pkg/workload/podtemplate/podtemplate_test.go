@@ -1082,6 +1082,21 @@ func TestBuildErrors(t *testing.T) {
 			}),
 			wantErr: "spec.podTemplate.spec.containers[0].resources.limits[cpu]",
 		},
+		{
+			name: "zero CPU request",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.Resources.Requests = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0")}
+			}),
+			wantErr: "spec.podTemplate.spec.containers[0].resources.requests[cpu]: Invalid value",
+		},
+		{
+			name: "CPU request above the CPU limit",
+			mod: ctrMod(func(c *corev1.Container) {
+				c.Resources.Limits[corev1.ResourceCPU] = resource.MustParse("1")
+				c.Resources.Requests = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")}
+			}),
+			wantErr: "spec.podTemplate.spec.containers[0].resources.requests[cpu]: Invalid value: \"2\": must not exceed the CPU limit 1",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

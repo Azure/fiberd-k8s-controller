@@ -124,7 +124,7 @@ func (o *Options) AddFlags(fs *flag.FlagSet) {
 	fs.Var((*familyValue)(&o.Template.EndpointFamily), "endpoint-family",
 		"Every grant Pod runs fiberd with this -endpoint-family. It is one of unix, inet4 or inet6.")
 	fs.Var((*quantityValue)(&o.Template.DefaultCPU), "default-pod-cpu",
-		"A grant Pod whose template sets no CPU gets this CPU limit.")
+		"A grant Pod whose template sets no CPU gets this CPU request and no CPU limit.")
 	fs.StringVar(&o.Template.ServiceAccount, "grant-service-account", o.Template.ServiceAccount,
 		"Every grant Pod runs as this service account.")
 	fs.StringVar(&o.Namespace, "namespace", o.Namespace,
