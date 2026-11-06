@@ -82,6 +82,13 @@ func TestCRDValidation(t *testing.T) {
 			wantErr: "the fiberd container's command is the image entrypoint",
 		},
 		{
+			name: "a container workingDir",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetContainerField(t, u, "workingDir", "/srv")
+			},
+			wantErr: "podTemplate.spec.containers[0].workingDir is not allowed",
+		},
+		{
 			name: "an init container",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
 				testutil.SetPodField(t, u, "initContainers", []any{map[string]any{"name": "init", "image": "registry.k8s.io/pause:3.10"}})

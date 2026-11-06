@@ -281,6 +281,9 @@ func checkShape(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 		if len(c.Command) > 0 {
 			errs = append(errs, field.Forbidden(cPath.Child("command"), "the image entrypoint runs fiberd"))
 		}
+		if c.WorkingDir != "" {
+			errs = append(errs, field.Forbidden(cPath.Child("workingDir"), "fiberd runs in the image's working directory"))
+		}
 		if c.Lifecycle != nil {
 			errs = append(errs, field.Forbidden(cPath.Child("lifecycle"), "a hook would run a tenant command with fiberd's capabilities"))
 		}

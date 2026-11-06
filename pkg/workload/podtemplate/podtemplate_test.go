@@ -227,11 +227,6 @@ func TestBuildPassThrough(t *testing.T) {
 			},
 			get: func(s *corev1.PodSpec) any { return s.ResourceClaims },
 		},
-		{
-			name: "container workingDir",
-			mod:  func(s *corev1.PodSpec) { s.Containers[0].WorkingDir = "/srv" },
-			get:  func(s *corev1.PodSpec) any { return s.Containers[0].WorkingDir },
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -731,6 +726,11 @@ func TestBuildErrors(t *testing.T) {
 			name:    "command set",
 			mod:     ctrMod(func(c *corev1.Container) { c.Command = []string{"/bin/sh"} }),
 			wantErr: "spec.podTemplate.spec.containers[0].command",
+		},
+		{
+			name:    "workingDir set",
+			mod:     ctrMod(func(c *corev1.Container) { c.WorkingDir = "/srv" }),
+			wantErr: "spec.podTemplate.spec.containers[0].workingDir: Forbidden",
 		},
 		{
 			name: "lifecycle hook set",
