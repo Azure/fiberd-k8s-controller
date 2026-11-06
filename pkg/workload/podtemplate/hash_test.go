@@ -97,6 +97,18 @@ func TestHashSensitive(t *testing.T) {
 		{name: "namespace", mod: func(cg *v1alpha1.CapacityGrant) { cg.Namespace = "team-b" }, wantChange: true},
 		{name: "zygote digest", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.Digest = "sha256:" + strings.Repeat("cd", 32) }, wantChange: true},
 		{name: "zygote command", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.Command = []string{"/app/other"} }, wantChange: true},
+		{
+			name: "zygote registry",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z"}
+			},
+			wantChange: true,
+		},
+		{
+			name:       "zygote seal key Secret",
+			mod:        func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.SealKeySecretName = "k" },
+			wantChange: true,
+		},
 		{name: "fibers max", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Fibers.Max = 8 }, wantChange: true},
 		{name: "fibers warm", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Fibers.Warm = 2 }, wantChange: true},
 		{
@@ -119,7 +131,7 @@ func TestHashSensitive(t *testing.T) {
 			mod:        func(cg *v1alpha1.CapacityGrant) { cg.Spec.PodTemplate.Annotations = map[string]string{"team": "a"} },
 			wantChange: true,
 		},
-		{name: "container args", mod: func(cg *v1alpha1.CapacityGrant) { container(cg).Args = []string{"-registry=r"} }, wantChange: true},
+		{name: "container args", mod: func(cg *v1alpha1.CapacityGrant) { container(cg).Args = []string{"-delta-registry=r"} }, wantChange: true},
 		{
 			name: "memory limit",
 			mod: func(cg *v1alpha1.CapacityGrant) {

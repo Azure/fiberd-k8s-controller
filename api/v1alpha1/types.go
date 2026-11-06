@@ -94,7 +94,10 @@ type CapacityGrantSpec struct {
 	PodTemplate corev1.PodTemplateSpec `json:"podTemplate"`
 }
 
-// ZygoteSpec names the zygote of a grant and how fiberd starts it.
+// ZygoteSpec names the zygote of a grant and how fiberd starts it. Exactly one of command
+// and registry says where the zygote comes from.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.command) != has(self.registry)",message="exactly one of zygote.command and zygote.registry must be set"
 type ZygoteSpec struct {
 	// digest names what every fiber is cloned from. fiberd refuses a grant whose digest it
 	// does not serve, and parked sessions resume only on a home with the same digest.
@@ -104,10 +107,26 @@ type ZygoteSpec struct {
 
 	// command is the zygote program inside the fiberd container, path first then its
 	// arguments. The controller passes digest and command to fiberd as its template mapping.
-	// +required
+	// +optional
 	// +kubebuilder:validation:MinItems=1
 	// +listType=atomic
-	Command []string `json:"command"`
+	Command []string `json:"command,omitempty"`
+
+	// registry is the OCI repository fiberd pulls the zygote artifact from by digest, such
+	// as ghcr.io/team-a/zygotes, or http://registry.local:5000/zygotes for plain HTTP. It
+	// is the value of fiberd's -registry flag.
+	// +optional
+	// +kubebuilder:validation:MaxLength=255
+	// +kubebuilder:validation:Pattern=`^(https?://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+	Registry string `json:"registry,omitempty"`
+
+	// sealKeySecretName names a Secret in the grant's namespace that holds the fleet's seal
+	// key under the key seal-key.json. fiberd seals the grant's deltas with it, and opens
+	// sealed author images of registry artifacts with it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	SealKeySecretName string `json:"sealKeySecretName,omitempty"`
 }
 
 // FiberBudget bounds the fibers of a grant.

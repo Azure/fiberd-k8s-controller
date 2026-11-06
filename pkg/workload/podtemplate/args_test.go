@@ -21,19 +21,21 @@ func TestCheckArgs(t *testing.T) {
 	}{
 		{name: "no args"},
 		{name: "empty list", args: []string{}},
-		{name: "one-dash flag with a value", args: []string{"-registry=example.com/zygotes"}},
-		{name: "two-dash flag with a value", args: []string{"--registry=example.com/zygotes"}},
-		{name: "empty value", args: []string{"-registry="}},
+		{name: "one-dash flag with a value", args: []string{"-delta-registry=example.com/deltas"}},
+		{name: "two-dash flag with a value", args: []string{"--delta-registry=example.com/deltas"}},
+		{name: "empty value", args: []string{"-delta-registry="}},
 		{name: "value with spaces is one item", args: []string{"-engine=/usr/bin/engine --mode fast"}},
-		{name: "value holding an equals sign", args: []string{"-registry=example.com/zygotes?tag=a=b"}},
+		{name: "value holding an equals sign", args: []string{"-delta-registry=example.com/deltas?tag=a=b"}},
 		{name: "bare boolean flag", args: []string{"-gvisor-templates-on-disk"}},
 		{name: "two-dash boolean with a value", args: []string{"--gvisor-templates-on-disk=false"}},
-		{name: "every tenant flag", args: []string{"-delta-registry=r", "-delta-key=/k", "-delta-seal-key=/s", "-delta-trust=/t", "-devices=/dev/x", "-engine-memory-max=1", "-grant-ceiling=1", "-hyperlight-guest=/g", "-parity=off"}},
+		{name: "every tenant flag", args: []string{"-delta-registry=r", "-delta-key=/k", "-delta-trust=/t", "-devices=/dev/x", "-engine-memory-max=1", "-grant-ceiling=1", "-hyperlight-guest=/g", "-parity=off"}},
 		{name: "controller flag", args: []string{"-issuer=https://evil.example"}, wantErr: "args[0]: Forbidden: -issuer is not a flag a tenant may set"},
 		{name: "controller flag in the two-dash form", args: []string{"--verifier=insecure-json"}, wantErr: "-verifier is not a flag a tenant may set"},
 		{name: "controller boolean", args: []string{"-insecure-plaintext"}, wantErr: "-insecure-plaintext is not a flag a tenant may set"},
 		{name: "controller boolean with a value", args: []string{"--all-caps=true"}, wantErr: "-all-caps is not a flag a tenant may set"},
-		{name: "controller flag later in the list", args: []string{"-registry=r", "-runc-rootfs=/"}, wantErr: "args[1]"},
+		{name: "controller flag later in the list", args: []string{"-delta-registry=r", "-runc-rootfs=/"}, wantErr: "args[1]"},
+		{name: "zygote registry", args: []string{"-registry=example.com/zygotes"}, wantErr: "-registry is not a flag a tenant may set"},
+		{name: "seal key", args: []string{"--delta-seal-key=/k"}, wantErr: "-delta-seal-key is not a flag a tenant may set"},
 		{name: "template for the grant's digest", args: []string{"-template=sha256:" + strings.Repeat("ab", 32) + "=/bin/sh"}, wantErr: "-template is not a flag a tenant may set"},
 		{name: "template for the default key", args: []string{"--template=default=/bin/sh"}, wantErr: "-template is not a flag a tenant may set"},
 		{name: "operator flag", args: []string{"-userns-pool=0:65536"}, wantErr: "-userns-pool is not a flag a tenant may set"},
@@ -47,8 +49,8 @@ func TestCheckArgs(t *testing.T) {
 		{name: "binary flag pod-uid", args: []string{"-pod-uid=x"}, wantErr: "-pod-uid is not a flag a tenant may set"},
 		{name: "binary flag pod-namespace", args: []string{"-pod-namespace=x"}, wantErr: "-pod-namespace is not a flag a tenant may set"},
 		{name: "binary boolean version", args: []string{"--version"}, wantErr: "-version is not a flag a tenant may set"},
-		{name: "non-boolean flag without a value", args: []string{"-registry"}, wantErr: "must carry its value as -registry=value"},
-		{name: "flag and value as two items", args: []string{"-registry", "example.com/zygotes"}, wantErr: "args[1]"},
+		{name: "non-boolean flag without a value", args: []string{"-delta-registry"}, wantErr: "must carry its value as -delta-registry=value"},
+		{name: "flag and value as two items", args: []string{"-delta-registry", "example.com/deltas"}, wantErr: "args[1]"},
 		{name: "flag and value split by a space", args: []string{"-registry example.com/zygotes"}, wantErr: "args[0]: Invalid value"},
 		{name: "no dash", args: []string{"registry=example.com"}, wantErr: "args[0]: Invalid value"},
 		{name: "three dashes", args: []string{"---registry=example.com"}, wantErr: "args[0]: Invalid value"},
@@ -76,9 +78,9 @@ func TestCheckArgs(t *testing.T) {
 
 func TestTenantFlags(t *testing.T) {
 	want := []string{
-		"delta-key", "delta-registry", "delta-seal-key", "delta-trust", "devices", "engine",
+		"delta-key", "delta-registry", "delta-trust", "devices", "engine",
 		"engine-memory-max", "grant-ceiling", "gvisor-templates-on-disk", "hyperlight-guest",
-		"parity", "registry",
+		"parity",
 	}
 	cases := []struct {
 		name string
@@ -158,11 +160,12 @@ func TestTenantBoolFlagsMatchFiberd(t *testing.T) {
 }
 
 // TestControllerArgsAreNotTenantFlags checks that a tenant can pass none
-// of the flags the controller sets, -template included.
+// of the flags the controller sets, the zygote's included.
 func TestControllerArgsAreNotTenantFlags(t *testing.T) {
 	cases := []struct {
 		name    string
 		runtime v1alpha1.Runtime
+		zygote  []string
 		opts    Options
 	}{
 		{name: "proc", runtime: v1alpha1.RuntimeProc},
@@ -170,10 +173,15 @@ func TestControllerArgsAreNotTenantFlags(t *testing.T) {
 		{name: "gvisor", runtime: v1alpha1.RuntimeGvisor},
 		{name: "hyperlight", runtime: v1alpha1.RuntimeHyperlight},
 		{name: "proc with plaintext", runtime: v1alpha1.RuntimeProc, opts: Options{Plaintext: true}},
+		{name: "registry zygote with a seal key", runtime: v1alpha1.RuntimeProc, zygote: []string{"-registry=r", "-delta-seal-key=/k", "-fiber-hide=/d"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, arg := range controllerArgs(tc.runtime, "d=/z", tc.opts.withDefaults()) {
+			zygote := tc.zygote
+			if zygote == nil {
+				zygote = []string{"-template=d=/z"}
+			}
+			for _, arg := range controllerArgs(tc.runtime, zygote, tc.opts.withDefaults()) {
 				name, _, _ := strings.Cut(strings.TrimPrefix(arg, "-"), "=")
 				if tenantFlags[name] {
 					t.Errorf("the controller sets -%s, but CheckArgs lets a tenant set it too", name)

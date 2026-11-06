@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +73,7 @@ func TestManager(t *testing.T) {
 		{name: "a new grant gets a Service and a Deployment it controls, written only by server-side apply", run: testCreated},
 		{name: "a spec change is applied by server-side apply and changes the grant hash", run: testSpecChange},
 		{name: "a hyperlight grant gets a Deployment whose init container installs the helper", run: testHyperlight},
+		{name: "a registry zygote runs fiberd with -registry, no -template and its seal key Secret", run: testRegistryZygote},
 		{name: "a restartedAt annotation from another field manager survives an apply", run: testRestartedAt},
 		{name: "a deleted Service is created again", run: testServiceReturns},
 		{name: "a foreign Deployment of the same name is left alone and the grant reports DeploymentConflict", run: testForeignDeployment},
@@ -208,6 +211,30 @@ func testHyperlight(t *testing.T) {
 		t.Fatalf("Deployment %s initContainers = %v, want one running %s", dep.Name, inits, helperImage)
 	}
 	waitForCondition(t, cg, v1alpha1.ConditionReady, metav1.ConditionFalse, v1alpha1.ReasonUnavailable)
+}
+
+func testRegistryZygote(t *testing.T) {
+	ns := tenantNamespace(t, true)
+	cg := newGrant(ns, "registry")
+	cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes", SealKeySecretName: "fleet-seal"}
+	if err := admin.Create(t.Context(), cg); err != nil {
+		t.Fatalf("create CapacityGrant %s/%s: %v", ns, cg.Name, err)
+	}
+	dep, _ := waitForObjects(t, cg)
+	spec := dep.Spec.Template.Spec
+	args := spec.Containers[0].Args
+	for _, want := range []string{"-registry=ghcr.io/team-a/zygotes", "-delta-seal-key=/var/run/secrets/fiberd.io/seal-key/seal-key.json"} {
+		if !slices.Contains(args, want) {
+			t.Errorf("args %q do not hold %q", args, want)
+		}
+	}
+	if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-template=") }) {
+		t.Errorf("args %q hold a -template flag beside the registry", args)
+	}
+	i := slices.IndexFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Secret != nil })
+	if i < 0 || spec.Volumes[i].Secret.SecretName != "fleet-seal" {
+		t.Errorf("volumes %v hold no volume of Secret fleet-seal", spec.Volumes)
+	}
 }
 
 func testRestartedAt(t *testing.T) {

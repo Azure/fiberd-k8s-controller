@@ -48,7 +48,6 @@ spec:
         [
           'delta-key',
           'delta-registry',
-          'delta-seal-key',
           'delta-trust',
           'devices',
           'engine',
@@ -56,8 +55,7 @@ spec:
           'grant-ceiling',
           'gvisor-templates-on-disk',
           'hyperlight-guest',
-          'parity',
-          'registry'
+          'parity'
         ]
     - name: tenantFlagArgs
       expression: "variables.tenantFlags.map(f, '-' + f) + variables.tenantFlags.map(f, '--' + f)"
@@ -96,7 +94,7 @@ spec:
     # A mount naming an overlay volume would expose fiberd's keys, grants,
     # certificate or token at a path fibers can see.
     - name: ownedVolumes
-      expression: "['fiberd-state', 'fiberd-grants', 'fiberd-tls', 'fiberd-grant-token', 'fiberd-helper']"
+      expression: "['fiberd-state', 'fiberd-grants', 'fiberd-tls', 'fiberd-grant-token', 'fiberd-helper', 'fiberd-seal-key']"
     - name: volumeNames
       expression: |-
         variables.volumes.map(v, v.name)
@@ -126,8 +124,8 @@ spec:
     # A flag and its value are one item, so no tenant item can be read as the
     # value of another. The pattern is podtemplate.ArgPattern.
     - expression: "variables.args.all(a, a.matches('^-{1,2}[a-z][a-z0-9-]*(=.*)?$'))"
-      messageExpression: "'arg ' + variables.args.filter(a, !a.matches('^-{1,2}[a-z][a-z0-9-]*(=.*)?$'))[0] + ' is not one flag such as -registry=example.com'"
-      message: "every podTemplate arg must be one flag such as -registry=example.com"
+      messageExpression: "'arg ' + variables.args.filter(a, !a.matches('^-{1,2}[a-z][a-z0-9-]*(=.*)?$'))[0] + ' is not one flag such as -delta-registry=example.com'"
+      message: "every podTemplate arg must be one flag such as -delta-registry=example.com"
       reason: Invalid
     - expression: "variables.args.all(a, a.split('=')[0] in variables.tenantFlagArgs)"
       messageExpression: "'arg ' + variables.args.filter(a, !(a.split('=')[0] in variables.tenantFlagArgs))[0] + ' names a flag a tenant may not set'"
@@ -179,7 +177,7 @@ spec:
       reason: Forbidden
     - expression: "!variables.volumeNames.exists(n, n in variables.ownedVolumes)"
       messageExpression: "'volume ' + variables.volumeNames.filter(n, n in variables.ownedVolumes)[0] + ' is mounted by the controller'"
-      message: "the volumes fiberd-state, fiberd-grants, fiberd-tls, fiberd-grant-token and fiberd-helper are mounted by the controller"
+      message: "the volumes fiberd-state, fiberd-grants, fiberd-tls, fiberd-grant-token, fiberd-helper and fiberd-seal-key are mounted by the controller"
       reason: Forbidden
     # Unclean or relative paths would slip past the owned directory check.
     - expression: "!variables.mountPaths.exists(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..'))"

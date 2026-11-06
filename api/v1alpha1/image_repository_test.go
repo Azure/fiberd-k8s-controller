@@ -57,3 +57,35 @@ func TestImageRepositoryPattern(t *testing.T) {
 		})
 	}
 }
+
+func TestRegistryPattern(t *testing.T) {
+	re := regexp.MustCompile(v1alpha1.RegistryPattern)
+
+	cases := []struct {
+		registry string
+		want     bool
+	}{
+		{registry: "ghcr.io/team-a/zygotes", want: true},
+		{registry: "https://ghcr.io/team-a/zygotes", want: true},
+		{registry: "http://registry.local:5000/zygotes", want: true},
+		{registry: "localhost:5000/zygotes", want: true},
+
+		// fiberd appends @<digest> itself.
+		{registry: "ghcr.io/team-a/zygotes:latest", want: false},
+		{registry: "ghcr.io/team-a/zygotes@sha256:0123", want: false},
+
+		{registry: "ghcr.io", want: false},
+		{registry: "zygotes", want: false},
+		{registry: "oci://ghcr.io/team-a/zygotes", want: false},
+		{registry: "ghcr.io/team-a/zygotes/", want: false},
+		{registry: "", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.registry, func(t *testing.T) {
+			if got := re.MatchString(tc.registry); got != tc.want {
+				t.Errorf("MatchString(%q) = %v, want %v", tc.registry, got, tc.want)
+			}
+		})
+	}
+}

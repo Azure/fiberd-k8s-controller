@@ -106,9 +106,32 @@ func TestBuildArgs(t *testing.T) {
 		{
 			name: "tenant args come first",
 			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) {
-				container(cg).Args = []string{"-registry=example.com/zygotes", "--gvisor-templates-on-disk"}
+				container(cg).Args = []string{"-delta-registry=example.com/deltas", "--gvisor-templates-on-disk"}
 			}},
-			want: append([]string{"-registry=example.com/zygotes", "--gvisor-templates-on-disk"}, wantProcArgs()...),
+			want: append([]string{"-delta-registry=example.com/deltas", "--gvisor-templates-on-disk"}, wantProcArgs()...),
+		},
+		{
+			name: "a registry zygote replaces the template",
+			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes"}
+			}},
+			want: withArg(wantProcArgs(), "-template=", "-registry=ghcr.io/team-a/zygotes"),
+		},
+		{
+			name: "a command zygote may share the seal key for its deltas",
+			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.SealKeySecretName = "fleet-seal" }},
+			want: append(wantProcArgs(),
+				"-delta-seal-key=/var/run/secrets/fiberd.io/seal-key/seal-key.json",
+				"-fiber-hide=/var/run/secrets/fiberd.io/seal-key"),
+		},
+		{
+			name: "a seal key adds its file and hides its directory",
+			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes", SealKeySecretName: "fleet-seal"}
+			}},
+			want: append(withArg(wantProcArgs(), "-template=", "-registry=ghcr.io/team-a/zygotes"),
+				"-delta-seal-key=/var/run/secrets/fiberd.io/seal-key/seal-key.json",
+				"-fiber-hide=/var/run/secrets/fiberd.io/seal-key"),
 		},
 		{
 			name: "dollar signs from the grant and options are escaped",
@@ -189,7 +212,13 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 		wantGuest     string
 		wantTemplate  string
 		wantRegistry  string
+		wantDeltas    string
 		wantPlaintext bool
+		// registry and sealKey replace the command with a registry zygote.
+		registry    string
+		sealKey     string
+		wantSealKey string
+		wantHide    string
 	}{
 		{
 			name:         "proc",
@@ -230,10 +259,28 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 			name:         "tenant flag and a literal dollar survive",
 			runtime:      v1alpha1.RuntimeProc,
 			command:      []string{"/app/zygote", "$(HOME)"},
-			tenantArgs:   []string{"--registry=example.com/zygotes"},
+			tenantArgs:   []string{"--delta-registry=example.com/deltas"},
 			wantRuntime:  "proc",
 			wantTemplate: "/app/zygote $(HOME)",
-			wantRegistry: "example.com/zygotes",
+			wantDeltas:   "example.com/deltas",
+		},
+		{
+			name:         "registry zygote",
+			runtime:      v1alpha1.RuntimeProc,
+			registry:     "http://registry.local:5000/zygotes",
+			wantRuntime:  "proc",
+			wantRegistry: "http://registry.local:5000/zygotes",
+		},
+		{
+			name:         "registry zygote with a seal key",
+			runtime:      v1alpha1.RuntimeGvisor,
+			registry:     "ghcr.io/team-a/zygotes",
+			sealKey:      "fleet-seal",
+			wantRuntime:  "gvisor",
+			wantGvisor:   "/usr/share/fiberd/rootfs",
+			wantRegistry: "ghcr.io/team-a/zygotes",
+			wantSealKey:  "/var/run/secrets/fiberd.io/seal-key/seal-key.json",
+			wantHide:     "/var/run/secrets/fiberd.io/seal-key",
 		},
 	}
 	for _, tc := range cases {
@@ -241,6 +288,8 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
 				setRuntime(cg, tc.runtime)
 				cg.Spec.Zygote.Command = tc.command
+				cg.Spec.Zygote.Registry = tc.registry
+				cg.Spec.Zygote.SealKeySecretName = tc.sealKey
 				container(cg).Args = tc.tenantArgs
 			})
 			opts := testOptions()
@@ -288,6 +337,9 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 				{"hyperlight-helper", cfg.Runtime.Hyperlight.Helper, tc.wantHelper},
 				{"hyperlight-guest", cfg.Runtime.Hyperlight.Guest, tc.wantGuest},
 				{"registry", cfg.Registry.Templates, tc.wantRegistry},
+				{"delta-registry", cfg.Registry.Deltas, tc.wantDeltas},
+				{"delta-seal-key", cfg.Registry.Keys.Seal, tc.wantSealKey},
+				{"fiber-hide", strings.Join(cfg.Runtime.FiberHide, ","), tc.wantHide},
 				{"insecure-plaintext", cfg.API.TLS.InsecurePlaintext, tc.wantPlaintext},
 			}
 			for _, c := range checks {

@@ -230,6 +230,29 @@ func TestCRDValidation(t *testing.T) {
 			wantErr: "spec.helperImage: Too long",
 		},
 		{
+			name:   "a registry zygote with a seal key is accepted",
+			mutate: setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes", "sealKeySecretName": "fleet-seal"}),
+		},
+		{
+			name:    "a zygote with a command and a registry",
+			mutate:  setZygote(map[string]any{"command": []any{"/z"}, "registry": "ghcr.io/team-a/zygotes"}),
+			wantErr: "exactly one of zygote.command and zygote.registry must be set",
+		},
+		{
+			name:    "a zygote with neither a command nor a registry",
+			mutate:  setZygote(map[string]any{}),
+			wantErr: "exactly one of zygote.command and zygote.registry must be set",
+		},
+		{
+			name:   "a command zygote with a seal key is accepted",
+			mutate: setZygote(map[string]any{"command": []any{"/z"}, "sealKeySecretName": "fleet-seal"}),
+		},
+		{
+			name:    "a registry with a tag",
+			mutate:  setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes:latest"}),
+			wantErr: "spec.zygote.registry",
+		},
+		{
 			name:    "a name longer than 56 characters",
 			mutate:  func(_ *testing.T, u *unstructured.Unstructured) { u.SetName(strings.Repeat("a", 57)) },
 			wantErr: "the name is at most 56 characters",
@@ -250,5 +273,22 @@ func TestCRDValidation(t *testing.T) {
 				t.Fatalf("create error = %v, want Invalid naming %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// setZygote replaces spec.zygote with fields and the sample's digest.
+func setZygote(fields map[string]any) func(*testing.T, *unstructured.Unstructured) {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		digest, _, err := unstructured.NestedString(u.Object, "spec", "zygote", "digest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		z := map[string]any{"digest": digest}
+		for k, v := range fields {
+			z[k] = v
+		}
+		if err := unstructured.SetNestedMap(u.Object, z, "spec", "zygote"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

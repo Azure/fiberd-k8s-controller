@@ -148,7 +148,7 @@ var (
 
 // ownedVolumes are the overlay's volumes. A test keeps them equal to the
 // policy's ownedVolumes.
-var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume, grantTokenVolume, helperVolume}
+var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume, grantTokenVolume, helperVolume, sealKeyVolume}
 
 // reservedKeyPrefixes start the template label and annotation keys a tenant
 // may not set. fiberd.io keys are the controller's. The AppArmor and seccomp
@@ -195,8 +195,8 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	if len(errs) == 0 {
 		errs = append(errs, checkHelperImage(specPath.Child("helperImage"), rt, cg.Spec.HelperImage)...)
 	}
-	tflag, tErrs := templateFlag(specPath.Child("zygote"), cg.Spec.Zygote)
-	errs = append(errs, tErrs...)
+	zArgs, zErrs := zygoteArgs(specPath.Child("zygote"), cg.Spec.Zygote)
+	errs = append(errs, zErrs...)
 	errs = append(errs, checkShape(podPath, &tmpl.Spec)...)
 	metaPath := specPath.Child("podTemplate", "metadata")
 	errs = append(errs, checkReservedKeys(metaPath.Child("labels"), tmpl.Labels)...)
@@ -230,7 +230,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	c.Image = image
 	c.Env = append(c.Env, podEnv()...)
 	c.Env = append(c.Env, caEnv())
-	c.Args = append(c.Args, controllerArgs(rt, tflag, opts)...)
+	c.Args = append(c.Args, controllerArgs(rt, zArgs, opts)...)
 	c.Ports = append(c.Ports, corev1.ContainerPort{Name: PortNameGRPC, ContainerPort: PortGRPC, Protocol: corev1.ProtocolTCP})
 	c.VolumeMounts = append(c.VolumeMounts,
 		corev1.VolumeMount{Name: stateVolume, MountPath: stateDir},
@@ -238,6 +238,9 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 		corev1.VolumeMount{Name: tlsVolume, MountPath: tlsDir, ReadOnly: true},
 		corev1.VolumeMount{Name: grantTokenVolume, MountPath: grantTokenDir, ReadOnly: true},
 	)
+	if cg.Spec.Zygote.SealKeySecretName != "" {
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: sealKeyVolume, MountPath: sealKeyDir, ReadOnly: true})
+	}
 	setProbes(c)
 	c.Resources = resources
 	addHelper(&tmpl.Spec, c, rt, cg.Spec.HelperImage)
@@ -586,9 +589,10 @@ func trustPath(p string) (string, bool) {
 }
 
 // addVolumes adds fiberd's state directory, the in-memory directory the
-// home reads grants from, the tls volume and the token the home fetches its
-// grant with. Grants are bearer tokens until mutual TLS binds them, so they
-// never touch the node's disk.
+// home reads grants from, the tls volume, the token the home fetches its
+// grant with and, when the zygote names one, the seal key Secret. Grants
+// are bearer tokens until mutual TLS binds them, so they never touch the
+// node's disk.
 func addVolumes(spec *corev1.PodSpec, cg *v1alpha1.CapacityGrant, serviceName, issuerURL string) {
 	spec.Volumes = append(spec.Volumes,
 		corev1.Volume{Name: stateVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -599,6 +603,13 @@ func addVolumes(spec *corev1.PodSpec, cg *v1alpha1.CapacityGrant, serviceName, i
 		tlsCSIVolume(cg, serviceName),
 		grantToken(issuerURL),
 	)
+	if name := cg.Spec.Zygote.SealKeySecretName; name != "" {
+		spec.Volumes = append(spec.Volumes, corev1.Volume{Name: sealKeyVolume, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName:  name,
+			Items:       []corev1.KeyToPath{{Key: v1alpha1.SealKeySecretKey, Path: v1alpha1.SealKeySecretKey}},
+			DefaultMode: ptr.To[int32](0o400),
+		}}})
+	}
 }
 
 // grantToken projects a token bound to the Pod, whose only audience is the
