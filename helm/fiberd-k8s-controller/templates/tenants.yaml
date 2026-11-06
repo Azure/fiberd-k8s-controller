@@ -1,0 +1,65 @@
+{{- /* Each entry does what config/tenant does for one namespace. */ -}}
+{{- range .Values.tenants }}
+{{- $namespace := required "every tenant needs a namespace" .namespace }}
+{{- $authorGroup := required "every tenant needs an authorGroup" .authorGroup }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fiberd-grant
+  namespace: {{ $namespace | quote }}
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: grant
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fiberd-grant
+  namespace: {{ $namespace | quote }}
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: grant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fiberd-grant
+subjects:
+- kind: ServiceAccount
+  name: fiberd-grant
+  namespace: {{ $namespace | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fiberd-k8s-controller-tenant
+  namespace: {{ $namespace | quote }}
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fiberd-k8s-controller-tenant
+subjects:
+- kind: ServiceAccount
+  name: fiberd-k8s-controller
+  namespace: fiberd-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fiberd-grant-author
+  namespace: {{ $namespace | quote }}
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: grant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fiberd-grant-author
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: {{ $authorGroup | quote }}
+{{- end }}

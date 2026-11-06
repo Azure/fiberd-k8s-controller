@@ -6,6 +6,7 @@ GO_TOOL := $(GO) tool -modfile=hack/tools/go.mod
 CONTROLLER_GEN := $(GO_TOOL) controller-gen
 GOLANGCI_LINT := $(GO_TOOL) golangci-lint
 SETUP_ENVTEST := $(GO_TOOL) setup-envtest
+KUSTOMIZE := $(GO_TOOL) kustomize
 
 # envtest runs a real kube-apiserver and etcd. setup-envtest downloads them
 # into bin/, which git ignores. CI overrides the version per matrix row.
@@ -17,7 +18,7 @@ CONTROLLER_DOCKERFILE := dockerfiles/controller/Dockerfile
 
 .DEFAULT_GOAL := help
 
-.PHONY: help manifests generate fmt vet lint test test-envtest image image-multiarch kind-deps tidy verify
+.PHONY: help manifests generate chart fmt vet lint test test-envtest test-chart image image-multiarch kind-deps tidy verify
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -30,12 +31,17 @@ manifests:
 generate:
 	$(CONTROLLER_GEN) object paths="./api/..."
 
+# The chart's crds and templates/generated come from config, never by hand.
+chart:
+	$(GO) run ./hack/chart -kustomize "$(KUSTOMIZE)"
+
 fmt:
 	$(GO) fmt ./...
 
-# The envtest tag adds test/envtest, which builds only under it.
+# The envtest and chart tags add test/envtest and test/chart, which build only
+# under them.
 vet:
-	$(GO) vet -tags envtest ./...
+	$(GO) vet -tags envtest,chart ./...
 
 lint:
 	$(GOLANGCI_LINT) run
@@ -46,6 +52,10 @@ test:
 test-envtest:
 	assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_BIN_DIR) -p path)" && \
 		KUBEBUILDER_ASSETS="$$assets" $(GO) test -tags envtest -race -count=1 $(TESTFLAGS) ./test/envtest/...
+
+# Renders the chart and compares it with config. It needs helm but no cluster.
+test-chart:
+	KUSTOMIZE="$(KUSTOMIZE)" $(GO) test -tags chart -race -count=1 $(TESTFLAGS) ./test/chart/...
 
 # The host architecture, with no attestation manifest, so kind can load it.
 image:
@@ -65,6 +75,6 @@ tidy:
 	$(GO) mod tidy
 	cd hack/tools && $(GO) mod tidy
 
-verify: manifests generate
-	@git diff --exit-code -- api config || { echo "generated files differ, commit the result of make manifests generate"; exit 1; }
-	@test -z "$$(git ls-files --others --exclude-standard -- api config)" || { echo "generated files are untracked, commit the result of make manifests generate"; exit 1; }
+verify: manifests generate chart
+	@git diff --exit-code -- api config helm || { echo "generated files differ, commit the result of make manifests generate chart"; exit 1; }
+	@test -z "$$(git ls-files --others --exclude-standard -- api config helm)" || { echo "generated files are untracked, commit the result of make manifests generate chart"; exit 1; }

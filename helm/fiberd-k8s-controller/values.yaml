@@ -1,0 +1,33 @@
+# The controller image, named by digest. There is no tag value, and an empty
+# digest fails the render.
+image:
+  repository: ghcr.io/azure/fiberd-k8s-controller
+  digest: ""
+
+# The whole spec of the GrantPolicy named default, the only one the controller
+# reads. Each images entry is a repository and matches images under it with
+# any tag. privilegedNamespaces and registries stay unset, so no grant may run
+# a privileged fiberd container or pull its zygote until an admin lists them.
+grantPolicy:
+  images:
+    - ghcr.io/azure/fiberd
+    - ghcr.io/azure/fiberd-runc
+    - ghcr.io/azure/fiberd-gvisor
+  runtimes: [proc, runc]
+
+# One entry per tenant namespace, each with the group whose members may write
+# CapacityGrants there. The namespace must already exist, since its Pod
+# Security labels are the admin's. For example:
+#
+#   tenants:
+#     - namespace: team-a
+#       authorGroup: team-a-developers
+tenants: []
+
+# Where cert-manager and its csi-driver run. The chart bundles neither, and the
+# install fails when either is missing. The CA lives in this namespace, since
+# a ClusterIssuer reads its Secret from there.
+certManager:
+  namespace: cert-manager
+  serviceAccount: cert-manager
+  csiDriverServiceAccount: cert-manager-csi-driver

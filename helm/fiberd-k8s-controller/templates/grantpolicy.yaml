@@ -1,0 +1,6 @@
+apiVersion: fiberd.io/v1alpha1
+kind: GrantPolicy
+metadata:
+  name: default
+spec:
+  {{- toYaml .Values.grantPolicy | nindent 2 }}
