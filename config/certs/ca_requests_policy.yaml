@@ -1,0 +1,54 @@
+# fiberd-ca issues a serving leaf and a client leaf and nothing else. A
+# CertificateRequest carries its names only inside its CSR, which CEL cannot
+# read, and the issuer signs the names the CSR holds. So only the two
+# ServiceAccounts that build a CSR from a Certificate or a csi volume may ask,
+# and the fiberd-ca-certificates and fiberd-ca-pods policies check the names
+# where they are written. This policy checks the fields beside the CSR.
+#
+# The match takes issuerRef.name alone, whatever its kind and group, so a
+# namespaced Issuer named fiberd-ca is held to the same rules.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fiberd-ca-requests
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: ca
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["cert-manager.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE"]
+        resources: ["certificaterequests"]
+  matchConditions:
+    - name: fiberd-ca
+      expression: "has(object.spec) && has(object.spec.issuerRef) && has(object.spec.issuerRef.name) && object.spec.issuerRef.name == 'fiberd-ca'"
+  variables:
+    - name: usages
+      expression: "has(object.spec.usages) ? object.spec.usages : []"
+    - name: server
+      expression: "variables.usages == ['server auth']"
+    - name: client
+      expression: "variables.usages == ['client auth']"
+  validations:
+    # The chart rewrites both names to its values, which works only on the
+    # names spelled in full.
+    - expression: "request.userInfo.username in ['system:serviceaccount:cert-manager:cert-manager', 'system:serviceaccount:cert-manager:cert-manager-csi-driver']"
+      message: "only the issuing controller's and the csi-driver's ServiceAccounts may create a CertificateRequest for fiberd-ca"
+      reason: Forbidden
+    - expression: "!has(object.spec.isCA) || !object.spec.isCA"
+      message: "a CertificateRequest for fiberd-ca must not set isCA, fiberd-ca issues leaf certificates only"
+      reason: Forbidden
+    - expression: "variables.server || variables.client"
+      message: "a CertificateRequest for fiberd-ca must have usages of exactly server auth or exactly client auth"
+      reason: Forbidden
+    # The issuing controller writes duration as Go prints it, such as
+    # 24h0m0s, which duration() reads.
+    - expression: "!variables.server || (has(object.spec.duration) && duration(object.spec.duration) <= duration('24h'))"
+      message: "a server auth CertificateRequest for fiberd-ca must set a duration of at most 24h"
+      reason: Forbidden
+    - expression: "!variables.client || !has(object.spec.duration) || duration(object.spec.duration) <= duration('2160h')"
+      message: "a client auth CertificateRequest for fiberd-ca must leave duration unset or set it to at most 2160h"
+      reason: Forbidden

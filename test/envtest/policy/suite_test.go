@@ -42,14 +42,38 @@ var (
 	authorRoleFile           = filepath.Join(repoRoot, "config", "rbac", "tenant", "grant_author_role.yaml")
 	authorBindingFile        = filepath.Join(repoRoot, "config", "tenant", "author_role_binding.yaml")
 
-	// policyFiles are what config/policy and the GrantPolicy sample install,
-	// in an order where each object finds what it names.
-	policyFiles = []string{grantsPolicyFile, grantsBindingFile, grantPoliciesPolicyFile, grantPoliciesBindingFile, grantPolicySampleFile}
+	caRequestsPolicyFile      = filepath.Join(repoRoot, "config", "certs", "ca_requests_policy.yaml")
+	caRequestsBindingFile     = filepath.Join(repoRoot, "config", "certs", "ca_requests_policy_binding.yaml")
+	caCertificatesPolicyFile  = filepath.Join(repoRoot, "config", "certs", "ca_certificates_policy.yaml")
+	caCertificatesBindingFile = filepath.Join(repoRoot, "config", "certs", "ca_certificates_policy_binding.yaml")
+	caPodsPolicyFile          = filepath.Join(repoRoot, "config", "certs", "ca_pods_policy.yaml")
+	caPodsBindingFile         = filepath.Join(repoRoot, "config", "certs", "ca_pods_policy_binding.yaml")
+	caCertificateFile         = filepath.Join(repoRoot, "config", "certs", "ca_certificate.yaml")
+	servingCertificateFile    = filepath.Join(repoRoot, "config", "certmanager", "certificate.yaml")
+
+	// certManagerCRDs are the CertificateRequest and Certificate CRDs the
+	// fiberd-ca policies match.
+	certManagerCRDs = filepath.Join("testdata", "cert-manager-crds.yaml")
+
+	// policyFiles are what config/policy, the fiberd-ca policies of
+	// config/certs and the GrantPolicy sample install, in an order where
+	// each object finds what it names.
+	policyFiles = []string{
+		grantsPolicyFile, grantsBindingFile, grantPoliciesPolicyFile, grantPoliciesBindingFile, grantPolicySampleFile,
+		caRequestsPolicyFile, caRequestsBindingFile, caCertificatesPolicyFile, caCertificatesBindingFile, caPodsPolicyFile, caPodsBindingFile,
+	}
 )
 
 const (
 	grantsPolicy        = "fiberd-grants"
 	grantPoliciesPolicy = "fiberd-grantpolicies"
+	caRequestsPolicy    = "fiberd-ca-requests"
+	caCertsPolicy       = "fiberd-ca-certificates"
+	caPodsPolicy        = "fiberd-ca-pods"
+
+	// controllerNamespace is where the controller and its serving
+	// Certificate run.
+	controllerNamespace = "fiberd-system"
 
 	// grantPolicyName is the one GrantPolicy the fiberd-grants binding reads.
 	grantPolicyName = "default"
@@ -74,8 +98,14 @@ const (
 	paramNotFoundMessage = "no params found"
 )
 
-// admin is a cluster-admin client for every case.
-var admin client.Client
+var (
+	// admin is a cluster-admin client for every case.
+	admin client.Client
+
+	// restConfig is admin's config, from which a case impersonates
+	// another user.
+	restConfig *rest.Config
+)
 
 func TestMain(m *testing.M) {
 	os.Exit(run(m))
@@ -87,7 +117,7 @@ func run(m *testing.M) int {
 	logf.SetLogger(klog.NewKlogr())
 
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{crdDir},
+		CRDDirectoryPaths:     []string{crdDir, certManagerCRDs},
 		ErrorIfCRDPathMissing: true,
 	}
 	cfg, err := env.Start()
@@ -121,8 +151,14 @@ func setUp(cfg *rest.Config) error {
 	if admin, err = client.New(cfg, client.Options{Scheme: s}); err != nil {
 		return fmt.Errorf("create the admin client: %w", err)
 	}
+	restConfig = cfg
 
 	ctx := context.Background()
+	// The controller's serving Certificate is the one server auth
+	// Certificate fiberd-ca-certificates admits, and only here.
+	if err := admin.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controllerNamespace}}); err != nil {
+		return fmt.Errorf("create namespace %s: %w", controllerNamespace, err)
+	}
 	objs, err := testutil.ReadObjects(policyFiles...)
 	if err != nil {
 		return err
@@ -168,6 +204,25 @@ func waitEnforced(ctx context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("waiting for %s to refuse deleting GrantPolicy %s, the last answer was %w: %w", grantPoliciesPolicy, grantPolicyName, last, err)
+	}
+	// The fiberd-ca policies have no parameter, so any of their refusals
+	// shows the policy loaded. admin is neither ServiceAccount that may ask.
+	probes := []struct {
+		policy, substr string
+		obj            *unstructured.Unstructured
+	}{
+		{policy: caRequestsPolicy, substr: requesterMessage, obj: certificateRequest(ns.Name, clientRequestSpec())},
+		{policy: caCertsPolicy, substr: fieldsMessage, obj: withSpec(certificate(ns.Name, clientCertificateSpec()), "isCA", true)},
+		{policy: caPodsPolicy, substr: issuerKindMessage, obj: csiPod(ns.Name, withAttribute(clientAttributes(), attrIssuerKind, "Issuer"))},
+	}
+	for _, p := range probes {
+		err = wait.PollUntilContextTimeout(ctx, testutil.PollInterval, testutil.PollTimeout, true, func(ctx context.Context) (bool, error) {
+			last = dryRunCreate(ctx, p.obj)
+			return apierrors.IsForbidden(last) && strings.Contains(last.Error(), p.policy) && strings.Contains(last.Error(), p.substr), nil
+		})
+		if err != nil {
+			return fmt.Errorf("waiting for %s to refuse a %s, the last answer was %w: %w", p.policy, p.obj.GetKind(), last, err)
+		}
 	}
 	return nil
 }

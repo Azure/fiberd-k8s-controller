@@ -1,0 +1,78 @@
+# The Certificates fiberd-ca signs. A client leaf may live in any namespace,
+# and the only serving leaf a Certificate may ask for is the controller's own
+# in fiberd-system. Grant Pods get theirs from the csi volume that
+# fiberd-ca-pods checks. The spec fields are an allowlist, so a field added to
+# Certificates later is refused until it is listed here.
+#
+# The match takes issuerRef.name alone, whatever its kind and group, so a
+# namespaced Issuer named fiberd-ca is held to the same rules.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fiberd-ca-certificates
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: ca
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["cert-manager.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["certificates"]
+  matchConditions:
+    - name: fiberd-ca
+      expression: "has(object.spec) && has(object.spec.issuerRef) && has(object.spec.issuerRef.name) && object.spec.issuerRef.name == 'fiberd-ca'"
+    # Metadata-only writes, such as a finalizer's removal, must pass on a
+    # Certificate stored before these rules.
+    - name: spec-changed
+      expression: "request.operation == 'CREATE' || object.spec != oldObject.spec"
+  variables:
+    # isCA, subject, literalSubject, ipAddresses, uris, emailAddresses and
+    # otherNames are left out, so neither leaf can set them.
+    - name: allowedFields
+      expression: "['issuerRef', 'secretName', 'commonName', 'dnsNames', 'usages', 'duration', 'renewBefore', 'renewBeforePercentage', 'privateKey', 'secretTemplate', 'revisionHistoryLimit']"
+    - name: usages
+      expression: "has(object.spec.usages) ? object.spec.usages : []"
+    - name: dnsNames
+      expression: "has(object.spec.dnsNames) ? object.spec.dnsNames : []"
+    - name: server
+      expression: "variables.usages == ['server auth']"
+    - name: client
+      expression: "variables.usages == ['client auth']"
+    # The CRD takes any string as duration, and duration() fails on free
+    # text, which would refuse with an evaluation error instead of the rule.
+    # So duration() reads only what matches the form.
+    - name: durationForm
+      expression: "'^([0-9]+[hms])+$'"
+    - name: durationFormed
+      expression: "has(object.spec.duration) && object.spec.duration.matches(variables.durationForm)"
+  validations:
+    - expression: "object.spec.all(k, k in variables.allowedFields)"
+      messageExpression: "'spec.' + object.spec.filter(k, !(k in variables.allowedFields))[0] + ' is not allowed in a Certificate for fiberd-ca, which may set only ' + variables.allowedFields.join(', ')"
+      message: "a Certificate for fiberd-ca may set only issuerRef, secretName, commonName, dnsNames, usages, duration, renewBefore, renewBeforePercentage, privateKey, secretTemplate and revisionHistoryLimit"
+      reason: Forbidden
+    - expression: "(variables.client && variables.dnsNames.size() == 0) || variables.server"
+      message: "a Certificate for fiberd-ca must have usages of exactly client auth with no dnsNames, or exactly server auth"
+      reason: Forbidden
+    - expression: "!variables.server || request.namespace == 'fiberd-system'"
+      message: "a server auth Certificate for fiberd-ca is allowed only in fiberd-system, grant Pods get theirs from a csi volume"
+      reason: Forbidden
+    - expression: "!variables.server || (variables.dnsNames.size() == 2 && 'fiberd-k8s-controller.fiberd-system.svc' in variables.dnsNames && 'fiberd-k8s-controller.fiberd-system.svc.cluster.local' in variables.dnsNames)"
+      message: "a server auth Certificate for fiberd-ca must have dnsNames of exactly fiberd-k8s-controller.fiberd-system.svc and fiberd-k8s-controller.fiberd-system.svc.cluster.local"
+      reason: Forbidden
+    # fiberd names a caller by its key, so the common name is checked only
+    # for a wildcard.
+    - expression: "!has(object.spec.commonName) || !object.spec.commonName.contains('*')"
+      message: "the commonName of a Certificate for fiberd-ca must not hold a wildcard *"
+      reason: Forbidden
+    - expression: "!has(object.spec.duration) || variables.durationFormed"
+      message: "the duration of a Certificate for fiberd-ca must match ^([0-9]+[hms])+$, such as 24h"
+      reason: Forbidden
+    - expression: "!variables.server || (variables.durationFormed && duration(object.spec.duration) <= duration('24h'))"
+      message: "a server auth Certificate for fiberd-ca must set a duration of at most 24h"
+      reason: Forbidden
+    - expression: "!variables.client || !has(object.spec.duration) || (variables.durationFormed && duration(object.spec.duration) <= duration('2160h'))"
+      message: "a client auth Certificate for fiberd-ca must leave duration unset or set it to at most 2160h"
+      reason: Forbidden

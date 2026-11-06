@@ -189,6 +189,44 @@ func TestPolicyManifests(t *testing.T) {
 	}
 }
 
+// TestCAPolicyManifests checks config/certs installs each fiberd-ca policy
+// as the issuance rules need it: failing closed, enforced by a binding with
+// no parameter or namespace selector, and refusing as Forbidden. A binding
+// that selected namespaces would leave the rest to issue anything.
+func TestCAPolicyManifests(t *testing.T) {
+	objs := readDir(t, filepath.Join(configDir, "certs"))
+
+	for _, name := range []string{"fiberd-ca-requests", "fiberd-ca-certificates", "fiberd-ca-pods"} {
+		t.Run(name, func(t *testing.T) {
+			policy := find(t, objs, "ValidatingAdmissionPolicy", name)
+			if got := get(t, policy.Object, "spec", "failurePolicy"); got != "Fail" {
+				t.Errorf("policy spec.failurePolicy = %q, want Fail", got)
+			}
+			if _, ok, _ := unstructured.NestedFieldNoCopy(policy.Object, "spec", "paramKind"); ok {
+				t.Error("policy sets spec.paramKind, want no parameter")
+			}
+			for i, v := range objectList(t, policy.Object, "spec", "validations") {
+				if got := v["reason"]; got != "Forbidden" {
+					t.Errorf("validation %d reason = %v, want Forbidden", i, got)
+				}
+			}
+			binding := find(t, objs, "ValidatingAdmissionPolicyBinding", name)
+			if got := get(t, binding.Object, "spec", "policyName"); got != name {
+				t.Errorf("binding spec.policyName = %q, want %q", got, name)
+			}
+			want := []string{"Deny"}
+			if got := stringList(t, binding.Object, "spec", "validationActions"); !slices.Equal(got, want) {
+				t.Errorf("binding spec.validationActions = %q, want %q", got, want)
+			}
+			for _, field := range []string{"paramRef", "matchResources"} {
+				if _, ok, _ := unstructured.NestedFieldNoCopy(binding.Object, "spec", field); ok {
+					t.Errorf("binding sets spec.%s, want none", field)
+				}
+			}
+		})
+	}
+}
+
 // TestServiceAccounts ties each service account name to the object that
 // creates it and to the bindings that give it rights. A Pod naming a missing
 // account does not start, and a binding naming the wrong one grants nothing.
