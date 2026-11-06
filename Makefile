@@ -12,9 +12,12 @@ SETUP_ENVTEST := $(GO_TOOL) setup-envtest
 ENVTEST_K8S_VERSION ?= 1.37.x
 ENVTEST_BIN_DIR ?= $(CURDIR)/bin/envtest
 
+CONTROLLER_IMAGE ?= localhost/fiberd-k8s-controller:dev
+CONTROLLER_DOCKERFILE := dockerfiles/controller/Dockerfile
+
 .DEFAULT_GOAL := help
 
-.PHONY: help manifests generate fmt vet lint test test-envtest kind-deps tidy verify
+.PHONY: help manifests generate fmt vet lint test test-envtest image image-multiarch kind-deps tidy verify
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,6 +46,17 @@ test:
 test-envtest:
 	assets="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_BIN_DIR) -p path)" && \
 		KUBEBUILDER_ASSETS="$$assets" $(GO) test -tags envtest -race -count=1 $(TESTFLAGS) ./test/envtest/...
+
+# The host architecture, with no attestation manifest, so kind can load it.
+image:
+	docker buildx build --provenance=false --load -t $(CONTROLLER_IMAGE) -f $(CONTROLLER_DOCKERFILE) .
+
+# Both architectures with no push. The commit's time stamps every layer, so
+# the same commit gives the same image.
+image-multiarch:
+	docker buildx build --platform linux/amd64,linux/arm64 --provenance=false \
+		--build-arg SOURCE_DATE_EPOCH="$$(git log -1 --format=%ct)" \
+		--output type=image,push=false,rewrite-timestamp=true -f $(CONTROLLER_DOCKERFILE) .
 
 kind-deps:
 	hack/tests/kind/deps.sh
