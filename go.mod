@@ -3,7 +3,7 @@ module github.com/Azure/fiberd-k8s-controller
 go 1.27.3
 
 require (
-	github.com/Azure/fiberd v0.2.1-0.20261104230529-193fc0f7a8fe
+	github.com/Azure/fiberd v0.2.1-0.20261106190126-afb3f4c8a866
 	github.com/go-jose/go-jose/v4 v4.1.8
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0

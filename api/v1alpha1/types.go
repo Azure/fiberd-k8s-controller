@@ -43,8 +43,9 @@ type CapacityGrantSpec struct {
 	// +optional
 	WriteBudget *resource.Quantity `json:"writeBudget,omitempty"`
 
-	// callerThumbprint is the x5t#S256 thumbprint of the one client certificate allowed to
-	// present the grant. A home serving mutual TLS refuses a grant without it.
+	// callerThumbprint is the RFC 7638 thumbprint of the public key in the one client
+	// certificate allowed to present the grant. A home serving mutual TLS refuses a grant
+	// without it.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-]{43}$`
 	CallerThumbprint string `json:"callerThumbprint,omitempty"`
