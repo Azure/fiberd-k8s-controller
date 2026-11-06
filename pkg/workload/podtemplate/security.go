@@ -19,8 +19,7 @@ import (
 // the set fiberd measured for the runtime, caps.Proc or caps.Runc. Their
 // seccomp and AppArmor profiles are Unconfined, because CRIU cannot dump
 // from under a filter and the home remounts cgroupfs and sysctls, which
-// the default AppArmor profile denies. Unconfined is temporary. A later
-// change replaces it with a seccomp profile made for fiberd.
+// the default AppArmor profile denies.
 //
 // gvisor and hyperlight run privileged, since nobody has measured what
 // they need yet. A tenant that sets privileged gets a privileged Pod on

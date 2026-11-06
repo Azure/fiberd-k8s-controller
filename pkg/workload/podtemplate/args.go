@@ -2,7 +2,6 @@ package podtemplate
 
 import (
 	"regexp"
-	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -58,32 +57,10 @@ var tenantBoolFlags = map[string]bool{
 	"gvisor-templates-on-disk": true,
 }
 
-// TenantFlags returns, sorted, the flags a tenant may pass in args. Each
-// call returns a new slice.
-func TenantFlags() []string { return sortedNames(tenantFlags) }
-
-// TenantBoolFlags returns, sorted, the tenant flags that may be written
-// bare. Each call returns a new slice.
-func TenantBoolFlags() []string { return sortedNames(tenantBoolFlags) }
-
-func sortedNames(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for name := range set {
-		out = append(out, name)
-	}
-	slices.Sort(out)
-	return out
-}
-
-// CheckArgs refuses tenant args that name a flag outside TenantFlags. Each
-// arg must be one flag in the one- or two-dash form with its value after
-// "=", such as -delta-registry=example.com/deltas. Only a boolean flag may omit
-// the value.
-func CheckArgs(args []string) error {
-	return checkArgs(field.NewPath("args"), args).ToAggregate()
-}
-
-// checkArgs is CheckArgs with errors rooted at fld.
+// checkArgs refuses tenant args that name a flag outside tenantFlags, with
+// errors rooted at fld. Each arg must be one flag in the one- or two-dash
+// form with its value after "=", such as -delta-registry=example.com/deltas.
+// Only a boolean flag may omit the value.
 func checkArgs(fld *field.Path, args []string) field.ErrorList {
 	var errs field.ErrorList
 	for i, arg := range args {

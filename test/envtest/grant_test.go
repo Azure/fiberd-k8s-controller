@@ -25,8 +25,8 @@ import (
 	"github.com/Azure/fiberd/pkg/grant"
 
 	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
+	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
-	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
 )
 
 const (

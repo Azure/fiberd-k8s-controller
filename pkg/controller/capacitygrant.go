@@ -147,7 +147,7 @@ func (r *CapacityGrantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	blk := blocked(obs, specErr)
 	if blk == nil {
-		if err := r.Workload.Apply(ctx, cg, tmpl); err != nil {
+		if err := r.Workload.Apply(ctx, cg, tmpl, obs); err != nil {
 			if !apierrors.IsForbidden(err) {
 				return ctrl.Result{}, fmt.Errorf("apply the workload of CapacityGrant %s: %w", req.NamespacedName, err)
 			}

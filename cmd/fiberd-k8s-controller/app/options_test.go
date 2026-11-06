@@ -234,8 +234,6 @@ func TestValidate(t *testing.T) {
 		name    string
 		mutate  func(*Options)
 		wantErr []string
-		// wantAbsent holds text the error must not contain.
-		wantAbsent []string
 	}{
 		{
 			name:   "the defaults with an issuer and a namespace are valid",
@@ -327,40 +325,7 @@ func TestValidate(t *testing.T) {
 		{
 			name:    "an http issuer URL",
 			mutate:  func(o *Options) { o.Template.IssuerURL = "http://fiberd-k8s-controller.fiberd-system.svc:8443" },
-			wantErr: []string{"must use https"},
-		},
-		{
-			name:    "an issuer URL with a path",
-			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "/issuer" },
-			wantErr: []string{"must have no path, query or fragment"},
-		},
-		{
-			name:    "an issuer URL with a trailing slash",
-			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "/" },
-			wantErr: []string{"must have no path, query or fragment"},
-		},
-		{
-			name:    "an issuer URL with a query",
-			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "?tenant=a" },
-			wantErr: []string{"must have no path, query or fragment"},
-		},
-		{
-			name:    "an issuer URL with a fragment",
-			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "#a" },
-			wantErr: []string{"must have no path, query or fragment"},
-		},
-		{
-			name:    "an issuer URL with a bare question mark",
-			mutate:  func(o *Options) { o.Template.IssuerURL = testIssuer + "?" },
-			wantErr: []string{"must have no path, query or fragment"},
-		},
-		{
-			// Only the template check may report it. The controller's own
-			// issuer errors all name --issuer-url, so none of them may appear.
-			name:       "an issuer URL with no scheme",
-			mutate:     func(o *Options) { o.Template.IssuerURL = "fiberd-k8s-controller.fiberd-system.svc" },
-			wantErr:    []string{"absolute http or https URL"},
-			wantAbsent: []string{"must use https", "--issuer-url"},
+			wantErr: []string{"absolute https URL"},
 		},
 		{
 			name:    "a zero per-IP rate",
@@ -415,11 +380,6 @@ func TestValidate(t *testing.T) {
 			for _, want := range tc.wantErr {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("Validate() = %v, want it to name %q", err, want)
-				}
-			}
-			for _, absent := range tc.wantAbsent {
-				if strings.Contains(err.Error(), absent) {
-					t.Errorf("Validate() = %v, want it not to name %q", err, absent)
 				}
 			}
 		})

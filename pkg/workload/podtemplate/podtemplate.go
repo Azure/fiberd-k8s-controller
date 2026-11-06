@@ -532,7 +532,8 @@ func checkMountPath(fld *field.Path, p string) field.ErrorList {
 func isOwnedVolume(name string) bool { return slices.Contains(ownedVolumes, name) }
 
 // allowedSource reports whether s is a source the policy allows. Every
-// other source reaches the node or pulls with its credentials.
+// other source reaches the node or pulls with its credentials. The
+// admission policy repeats the list, and a test keeps the two equal.
 func allowedSource(s *corev1.VolumeSource) bool {
 	return s.EmptyDir != nil || s.ConfigMap != nil || s.Secret != nil || s.DownwardAPI != nil ||
 		s.Projected != nil || s.PersistentVolumeClaim != nil || s.Ephemeral != nil

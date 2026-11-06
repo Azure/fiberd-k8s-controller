@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/Azure/fiberd/pkg/fiberd"
 
@@ -63,14 +64,14 @@ func TestCheckArgs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := CheckArgs(tc.args)
+			err := checkArgs(field.NewPath("args"), tc.args).ToAggregate()
 			switch {
 			case tc.wantErr == "" && err != nil:
-				t.Errorf("CheckArgs(%q) = %v, want nil", tc.args, err)
+				t.Errorf("checkArgs(%q) = %v, want nil", tc.args, err)
 			case tc.wantErr != "" && err == nil:
-				t.Errorf("CheckArgs(%q) = nil, want an error holding %q", tc.args, tc.wantErr)
+				t.Errorf("checkArgs(%q) = nil, want an error holding %q", tc.args, tc.wantErr)
 			case tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr):
-				t.Errorf("CheckArgs(%q) = %q, want it to hold %q", tc.args, err, tc.wantErr)
+				t.Errorf("checkArgs(%q) = %q, want it to hold %q", tc.args, err, tc.wantErr)
 			}
 		})
 	}
@@ -82,26 +83,8 @@ func TestTenantFlags(t *testing.T) {
 		"engine-memory-max", "grant-ceiling", "gvisor-templates-on-disk", "hyperlight-guest",
 		"parity",
 	}
-	cases := []struct {
-		name string
-		got  func() []string
-	}{
-		{name: "sorted and complete", got: TenantFlags},
-		{
-			name: "a caller cannot change the set",
-			got: func() []string {
-				first := TenantFlags()
-				first[0] = "changed"
-				return TenantFlags()
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if diff := cmp.Diff(want, tc.got()); diff != "" {
-				t.Errorf("TenantFlags mismatch (-want +got):\n%s", diff)
-			}
-		})
+	if diff := cmp.Diff(want, sortedNames(tenantFlags)); diff != "" {
+		t.Errorf("tenantFlags mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -121,7 +104,7 @@ func fiberdFlags() *flag.FlagSet {
 // into the controller binary.
 func TestTenantFlagsAreFiberdFlags(t *testing.T) {
 	fs := fiberdFlags()
-	for _, name := range TenantFlags() {
+	for _, name := range sortedNames(tenantFlags) {
 		t.Run(name, func(t *testing.T) {
 			if fs.Lookup(name) == nil {
 				t.Errorf("fiberd does not register -%s", name)
@@ -147,8 +130,8 @@ func TestTenantBoolFlagsMatchFiberd(t *testing.T) {
 		name      string
 		got, want []string
 	}{
-		{name: "tenant boolean flags", got: TenantBoolFlags(), want: fromFiberd},
-		{name: "every boolean flag is a tenant flag", got: TenantBoolFlags(), want: slices.DeleteFunc(TenantFlags(), func(n string) bool { return !tenantBoolFlags[n] })},
+		{name: "tenant boolean flags", got: sortedNames(tenantBoolFlags), want: fromFiberd},
+		{name: "every boolean flag is a tenant flag", got: sortedNames(tenantBoolFlags), want: slices.DeleteFunc(sortedNames(tenantFlags), func(n string) bool { return !tenantBoolFlags[n] })},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,7 +167,7 @@ func TestControllerArgsAreNotTenantFlags(t *testing.T) {
 			for _, arg := range controllerArgs(tc.runtime, zygote, tc.opts.withDefaults()) {
 				name, _, _ := strings.Cut(strings.TrimPrefix(arg, "-"), "=")
 				if tenantFlags[name] {
-					t.Errorf("the controller sets -%s, but CheckArgs lets a tenant set it too", name)
+					t.Errorf("the controller sets -%s, but checkArgs lets a tenant set it too", name)
 				}
 			}
 		})

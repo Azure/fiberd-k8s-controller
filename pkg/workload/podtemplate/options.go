@@ -22,10 +22,14 @@ const (
 	DefaultStaleTTL       = 30 * time.Second
 	DefaultEndpointFamily = endpoint.Inet4
 	DefaultServiceAccount = "fiberd-grant"
+
+	// DefaultPodCPU is the CPU limit a grant Pod gets when its template
+	// sets none.
+	DefaultPodCPU = "500m"
 )
 
-// defaultCPU is the CPU limit a grant Pod gets when its template sets none.
-var defaultCPU = resource.MustParse("500m")
+// defaultCPU is DefaultPodCPU as a quantity.
+var defaultCPU = resource.MustParse(DefaultPodCPU)
 
 // Options is what the controller decides for every grant Pod. The tenant
 // sets none of it.
@@ -110,8 +114,10 @@ func (o Options) Validate() error {
 	return utilerrors.NewAggregate(errs)
 }
 
-// validIssuer accepts an absolute http or https URL with a host. fiberd
-// fetches OIDC discovery from it, so anything else fails at runtime.
+// validIssuer accepts an absolute https URL with a host and nothing after
+// it. fiberd fetches OIDC discovery from it, the controller serves it over
+// TLS only and core mounts discovery at the URL's root, so anything else
+// fails at runtime.
 func validIssuer(s string) error {
 	if s == "" {
 		return errors.New("issuer URL is required")
@@ -120,11 +126,14 @@ func validIssuer(s string) error {
 	if err != nil {
 		return fmt.Errorf("issuer URL %q: %w", s, err)
 	}
-	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return fmt.Errorf("issuer URL %q must be an absolute http or https URL", s)
+	if u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("issuer URL %q must be an absolute https URL, since the controller serves it over TLS only", s)
 	}
 	if strings.ContainsFunc(s, unicode.IsSpace) {
 		return fmt.Errorf("issuer URL %q must not contain whitespace", s)
+	}
+	if u.Path != "" || strings.ContainsAny(s, "?#") {
+		return fmt.Errorf("issuer URL %q must have no path, query or fragment, since discovery is served at its root", s)
 	}
 	return nil
 }

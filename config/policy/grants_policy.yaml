@@ -47,7 +47,7 @@ spec:
       expression: "has(object.spec.zygote.registry) ? object.spec.zygote.registry : ''"
     # The fiberd flags a tenant may set, sorted. Every other flag is the
     # controller's or the operator's. A test keeps the list equal to
-    # podtemplate.TenantFlags(), which says why each is the tenant's.
+    # podtemplate's tenantFlags, which says why each is the tenant's.
     - name: tenantFlags
       expression: |-
         [
@@ -79,6 +79,10 @@ spec:
       expression: "variables.envNames.filter(n, !n.matches(variables.envNamePattern))"
     - name: volumes
       expression: "has(object.spec.podTemplate.spec.volumes) ? object.spec.podTemplate.spec.volumes : []"
+    # Every other source reaches the node or pulls with its credentials. A
+    # test keeps the sources named here equal to podtemplate's allowedSource.
+    - name: deniedVolumes
+      expression: "variables.volumes.filter(v, !(has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.downwardAPI) || has(v.projected) || has(v.persistentVolumeClaim) || has(v.ephemeral)))"
     # The kubelet bind-mounts a node file at terminationMessagePath, so it
     # is a mount like any other. Empty means unset, as it does to the builder.
     - name: mountPaths
@@ -141,7 +145,8 @@ spec:
       messageExpression: "'arg ' + variables.args.filter(a, !a.contains('=') && !(a in variables.bareArgs))[0] + ' must carry its value as -name=value'"
       message: "a podTemplate arg must carry its value as -name=value, only a boolean flag may be bare"
       reason: Invalid
-    # An absent image is allowed. A later change defaults it from the runtime.
+    # An absent image passes here. The controller reports InvalidSpec until
+    # the grant sets one.
     - expression: "variables.image == '' || variables.image.matches('@sha256:[a-f0-9]{64}$')"
       message: "the fiberd container image must carry a digest, such as ghcr.io/azure/fiberd:0.4.0@sha256:..."
       reason: Invalid
@@ -180,10 +185,9 @@ spec:
       messageExpression: "'podTemplate key ' + variables.templateKeys.filter(k, k.contains('.fiberd.io/') || variables.reservedKeyPrefixes.exists(p, k.startsWith(p)))[0] + ' is reserved'"
       message: "a podTemplate label or annotation key is reserved"
       reason: Forbidden
-    # Every other source reaches the node or pulls with its credentials.
-    - expression: "variables.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.downwardAPI) || has(v.projected) || has(v.persistentVolumeClaim) || has(v.ephemeral))"
-      messageExpression: "'volume ' + variables.volumes.filter(v, !(has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.downwardAPI) || has(v.projected) || has(v.persistentVolumeClaim) || has(v.ephemeral)))[0].name + ' is not an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume'"
-      message: "a podTemplate volume must be an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume"
+    - expression: "variables.deniedVolumes.size() == 0"
+      messageExpression: "'volume ' + variables.deniedVolumes[0].name + ' is not an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume'"
+      message: "a podTemplate volume uses a source the policy does not allow"
       reason: Forbidden
     # A token volume is minted for the grant ServiceAccount, and fibers could
     # read it at a tenant path.
@@ -193,7 +197,7 @@ spec:
       reason: Forbidden
     - expression: "!variables.volumeNames.exists(n, n in variables.ownedVolumes)"
       messageExpression: "'volume ' + variables.volumeNames.filter(n, n in variables.ownedVolumes)[0] + ' is mounted by the controller'"
-      message: "the volumes fiberd-state, fiberd-grants, fiberd-tls, fiberd-grant-token, fiberd-helper and fiberd-seal-key are mounted by the controller"
+      message: "a podTemplate volume or mount uses a volume name the controller owns"
       reason: Forbidden
     - expression: "variables.uncleanPaths.size() == 0"
       messageExpression: "'mount path ' + variables.uncleanPaths[0] + ' is not a clean absolute path'"

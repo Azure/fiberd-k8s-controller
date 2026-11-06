@@ -29,7 +29,7 @@ import (
 	"github.com/Azure/fiberd-k8s-controller/cmd/fiberd-k8s-controller/app"
 	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
 	"github.com/Azure/fiberd-k8s-controller/pkg/testcert"
-	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
+	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 )
 
 const (

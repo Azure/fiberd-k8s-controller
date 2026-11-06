@@ -21,6 +21,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/funcr"
 	"github.com/google/go-cmp/cmp"
+	"k8s.io/utils/clock"
+	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 
 	"github.com/Azure/fiberd/pkg/grant"
@@ -224,7 +226,7 @@ func newRing(t *testing.T) grant.KeyRing {
 // startServer.
 func newServer(t *testing.T, handler http.Handler, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *issuer.Server {
 	t.Helper()
-	s, err := issuer.NewServer(t.Context(), "127.0.0.1:0", handler, getCertificate)
+	s, err := issuer.NewServer(t.Context(), "127.0.0.1:0", handler, getCertificate, clock.RealClock{})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -392,7 +394,7 @@ func TestServerLogsHandshakesThroughItsContext(t *testing.T) {
 		lines = append(lines, args)
 	}, funcr.Options{Verbosity: 4})
 	pair := newPair(t)
-	s, err := issuer.NewServer(logr.NewContext(t.Context(), log), "127.0.0.1:0", issuerHandler(newRing(t)), pairGetter(t, pair))
+	s, err := issuer.NewServer(logr.NewContext(t.Context(), log), "127.0.0.1:0", issuerHandler(newRing(t)), pairGetter(t, pair), clock.RealClock{})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -484,28 +486,49 @@ func TestServerServesIssuer(t *testing.T) {
 func TestServerReady(t *testing.T) {
 	pair := newPair(t)
 	cert := certificate(t, pair)
+	unparsed := *cert
+	unparsed.Leaf = nil
 	g := &certGetter{cert: cert}
-	s := newServer(t, issuerHandler(newRing(t)), g.get)
+	now := time.Now()
+	clk := clocktesting.NewFakePassiveClock(now)
+	s, err := issuer.NewServer(t.Context(), "127.0.0.1:0", issuerHandler(newRing(t)), g.get, clk)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 
 	if err := s.Ready(nil); err == nil || !strings.Contains(err.Error(), "not started") {
 		t.Errorf("Ready before Start = %v, want an error saying not started", err)
 	}
 	startServer(t, s)
 
+	expiry := pair.Leaf.NotAfter
 	cases := []struct {
 		name string
 		cert *tls.Certificate
 		err  error
+		// at is the time of the check. Zero means now.
+		at time.Time
 		// wantErr is a substring of the error. Empty means ready.
 		wantErr string
 	}{
 		{name: "certificate loaded", cert: cert},
 		{name: "no certificate loaded", wantErr: "no serving certificate loaded"},
 		{name: "getter fails", err: errors.New("unreadable"), wantErr: "unreadable"},
+		{name: "a second before the leaf expires", cert: cert, at: expiry.Add(-time.Second)},
+		{name: "the last instant the leaf is valid", cert: cert, at: expiry},
+		{name: "a second after the leaf expires", cert: cert, at: expiry.Add(time.Second), wantErr: "expired at"},
+		{name: "a leaf not parsed yet that is valid", cert: &unparsed},
+		{name: "a leaf not parsed yet that has expired", cert: &unparsed, at: expiry.Add(time.Second), wantErr: "expired at"},
+		{name: "a certificate with an empty chain", cert: &tls.Certificate{}, wantErr: "holds no certificate"},
+		{name: "a chain that does not parse", cert: &tls.Certificate{Certificate: [][]byte{[]byte("not DER")}}, wantErr: "read serving certificate"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			g.set(tc.cert, tc.err)
+			clk.SetTime(now)
+			if !tc.at.IsZero() {
+				clk.SetTime(tc.at)
+			}
 			err := s.Ready(nil)
 			if tc.wantErr == "" {
 				if err != nil {
@@ -538,16 +561,18 @@ func TestNewServer(t *testing.T) {
 		addr           string
 		handler        http.Handler
 		getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+		clk            clock.PassiveClock
 		// wantInErr is a substring of the error. Empty skips the check.
 		wantInErr string
 	}{
-		{name: "taken port", addr: taken, handler: handler, getCertificate: getter, wantInErr: taken},
-		{name: "nil handler", addr: "127.0.0.1:0", getCertificate: getter},
-		{name: "nil getter", addr: "127.0.0.1:0", handler: handler},
+		{name: "taken port", addr: taken, handler: handler, getCertificate: getter, clk: clock.RealClock{}, wantInErr: taken},
+		{name: "nil handler", addr: "127.0.0.1:0", getCertificate: getter, clk: clock.RealClock{}},
+		{name: "nil getter", addr: "127.0.0.1:0", handler: handler, clk: clock.RealClock{}},
+		{name: "nil clock", addr: "127.0.0.1:0", handler: handler, getCertificate: getter},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := issuer.NewServer(t.Context(), tc.addr, tc.handler, tc.getCertificate)
+			_, err := issuer.NewServer(t.Context(), tc.addr, tc.handler, tc.getCertificate, tc.clk)
 			if err == nil {
 				t.Fatalf("NewServer on %s succeeded, want an error", tc.addr)
 			}
@@ -617,6 +642,14 @@ func TestServerReloadsCertificate(t *testing.T) {
 			change: kubeletSwap,
 		},
 		{
+			// certwatcher reads the two files apart, so a rotation can show
+			// it a new certificate beside the old key.
+			name:       "a certificate beside the old key keeps the old one served",
+			layout:     plainLayout,
+			change:     func(t *testing.T, f certFiles, next testcert.Pair) { writeFile(t, f.cert, next.CertPEM) },
+			keepsFirst: true,
+		},
+		{
 			name:   "a pair that does not parse keeps the old one served",
 			layout: plainLayout,
 			change: func(t *testing.T, f certFiles, _ testcert.Pair) {
@@ -667,13 +700,18 @@ func TestServerReloadsCertificate(t *testing.T) {
 
 			tc.change(t, f, next)
 			if tc.keepsFirst {
-				stays(t, "the first pair being served", func() bool { return serves(first) })
+				stays(t, "the first pair being served and the replica ready", func() bool {
+					return serves(first) && s.Ready(nil) == nil
+				})
 				// The watcher must survive the bad read, so a good pair
 				// written afterwards is served.
 				writePair(t, last, f.cert, f.key)
 				waitFor(t, "the last pair to be served", func() bool { return serves(last) })
 			} else {
 				waitFor(t, "the next pair to be served", func() bool { return serves(next) })
+			}
+			if err := s.Ready(nil); err != nil {
+				t.Errorf("Ready after the rotation = %v, want nil", err)
 			}
 
 			cancel()

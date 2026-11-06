@@ -194,7 +194,7 @@ func TestGrantOf(t *testing.T) {
 			r := newClient(t, tc.funcs, l.objects()...)
 
 			// New gets no client, since every read must go through r.
-			got, err := New(nil).GrantOf(t.Context(), r, l.pod)
+			got, err := New(nil, nil).GrantOf(t.Context(), r, l.pod)
 
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("GrantOf error = %v, want %v", err, tc.wantErr)

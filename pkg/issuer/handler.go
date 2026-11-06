@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -161,7 +160,7 @@ func NewHandler(c Config) *Handler {
 		issuer:         c.Issuer,
 		reviewer:       c.Reviewer,
 		live:           c.Live,
-		fresh:          cacheThenLive{cache: c.Cache, live: c.Live},
+		fresh:          workload.CacheThenLive(c.Cache, c.Live),
 		workload:       c.Workload,
 		limits:         newLimiter(c.Limits, c.Clock),
 		serviceAccount: c.ServiceAccount,
@@ -296,27 +295,4 @@ func respondJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-// cacheThenLive reads from the cache and falls back to the API server on
-// NotFound. A cached object can only lag, so a hit is cheap and a miss may
-// be an object too new for this replica's informer.
-type cacheThenLive struct {
-	cache client.Reader
-	live  client.Reader
-}
-
-// Get reads key from the cache, then from the API server if the cache has
-// no such object.
-func (r cacheThenLive) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	err := r.cache.Get(ctx, key, obj, opts...)
-	if apierrors.IsNotFound(err) {
-		return r.live.Get(ctx, key, obj, opts...)
-	}
-	return err
-}
-
-// List reads from the cache. A list has no miss to fall back on.
-func (r cacheThenLive) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	return r.cache.List(ctx, list, opts...)
 }

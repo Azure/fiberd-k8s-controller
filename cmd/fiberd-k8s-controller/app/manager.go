@@ -63,6 +63,14 @@ const (
 	// EventSource is the component name on the Events the reconciler emits.
 	EventSource = "fiberd-k8s-controller"
 
+	// A standby takes over electionLeaseDuration after the leader last
+	// renewed. A leader that cannot renew for electionRenewDeadline stops,
+	// so it is gone before a standby may take over. electionRetryPeriod is
+	// how often each replica tries.
+	electionLeaseDuration = 15 * time.Second
+	electionRenewDeadline = 10 * time.Second
+	electionRetryPeriod   = 2 * time.Second
+
 	// startupTimeout bounds the startup read of the grant key ring. A
 	// stalled API server must not hold a Pod with no probes serving until
 	// the kubelet kills it.
@@ -93,6 +101,9 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 		LeaderElectionID:              LeaderElectionID,
 		LeaderElectionNamespace:       o.Namespace,
 		LeaderElectionReleaseOnCancel: true,
+		LeaseDuration:                 ptr.To(electionLeaseDuration),
+		RenewDeadline:                 ptr.To(electionRenewDeadline),
+		RetryPeriod:                   ptr.To(electionRetryPeriod),
 		HealthProbeBindAddress:        o.ProbeAddr,
 		Metrics:                       metricsserver.Options{BindAddress: "0"},
 		Cache:                         cacheOpts,
@@ -110,7 +121,7 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 	}
 
 	clk := clock.RealClock{}
-	workload := deployment.New(mgr.GetClient())
+	workload := deployment.New(mgr.GetClient(), mgr.GetAPIReader())
 	r := &controller.CapacityGrantReconciler{
 		Client:   mgr.GetClient(),
 		Workload: workload,
@@ -125,7 +136,7 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 	// The manager's client reads from informers, which can miss a Secret
 	// another replica created a moment ago. The ring is read once here, so
 	// a direct client costs one request.
-	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	c, err := client.New(cfg, client.Options{Scheme: scheme, HTTPClient: mgr.GetHTTPClient(), Mapper: mgr.GetRESTMapper()})
 	if err != nil {
 		return nil, fmt.Errorf("create the issuer key client: %w", err)
 	}
@@ -151,7 +162,7 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 		Clock:          clk,
 		Log:            ctrl.Log.WithName("issuer"),
 	})
-	srv, err := issuer.NewServer(ctx, o.IssuerAddr, handler.Routes(), cw.GetCertificate)
+	srv, err := issuer.NewServer(ctx, o.IssuerAddr, handler.Routes(), cw.GetCertificate, clk)
 	if err != nil {
 		return nil, fmt.Errorf("create the issuer server: %w", err)
 	}
@@ -181,20 +192,25 @@ func newScheme() (*runtime.Scheme, error) {
 }
 
 // cacheOptions drops managed fields, which nothing reads, and caches only
-// the Pods and ReplicaSets of grants, so the rest of a busy cluster costs
-// this process no memory. The grant route reads an object the filter hides
-// from the API server.
+// the Pods and ReplicaSets of grants and the Deployments and Services the
+// controller labelled, so the rest of a busy cluster costs this process no
+// memory and no watch traffic. The reconciler and the grant route read an
+// object the filter hides from the API server. That is how a foreign object
+// of a grant's name is still reported as a conflict.
 func cacheOptions() (cache.Options, error) {
 	ofGrant, err := labels.NewRequirement(v1alpha1.LabelGrant, selection.Exists, nil)
 	if err != nil {
 		return cache.Options{}, fmt.Errorf("select the objects of a grant: %w", err)
 	}
 	selector := labels.NewSelector().Add(*ofGrant)
+	managed := labels.SelectorFromSet(labels.Set{v1alpha1.LabelManagedBy: v1alpha1.ManagedBy})
 	return cache.Options{
 		DefaultTransform: cache.TransformStripManagedFields(),
 		ByObject: map[client.Object]cache.ByObject{
 			&corev1.Pod{}:        {Label: selector},
 			&appsv1.ReplicaSet{}: {Label: selector},
+			&appsv1.Deployment{}: {Label: managed},
+			&corev1.Service{}:    {Label: managed},
 		},
 	}, nil
 }
