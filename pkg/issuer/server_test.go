@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 
 	"github.com/Azure/fiberd/pkg/grant"
+	"github.com/Azure/fiberd/pkg/tlsconf/tlsconftest"
 
 	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
 	"github.com/Azure/fiberd-k8s-controller/pkg/testcert"
@@ -722,6 +724,46 @@ func TestServerReloadsCertificate(t *testing.T) {
 				}
 			case <-time.After(waitTimeout):
 				t.Fatal("certwatcher did not stop after the context ended")
+			}
+		})
+	}
+}
+
+// TestServerAsksForAClientCertificate shows that the listener hands a
+// client certificate to the routes without checking it, and serves a client
+// without one. The caller route checks the certificate itself.
+func TestServerAsksForAClientCertificate(t *testing.T) {
+	stranger := tlsconftest.NewCA(t, "stranger").Client(t, "caller")
+	pair := newPair(t)
+	s := newServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := 0
+		if r.TLS != nil {
+			n = len(r.TLS.PeerCertificates)
+		}
+		_, _ = io.WriteString(w, strconv.Itoa(n))
+	}), pairGetter(t, pair))
+	_, _ = startServer(t, s)
+
+	cases := []struct {
+		name  string
+		certs []tls.Certificate
+		want  string
+	}{
+		{name: "no client certificate", want: "0"},
+		{name: "a client certificate no CA here signed", certs: []tls.Certificate{stranger.TLS()}, want: "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := clientTLS(pair)
+			cfg.Certificates = tc.certs
+			resp, err := httpsClient(t, cfg).Get("https://" + s.Addr().String() + "/")
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			body, _ := io.ReadAll(resp.Body)
+			if string(body) != tc.want {
+				t.Errorf("the route saw %s client certificates, want %s", body, tc.want)
 			}
 		})
 	}

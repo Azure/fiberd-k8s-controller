@@ -2,6 +2,7 @@ package issuer
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,6 +113,10 @@ type Config struct {
 	// Reviewer asks the API server who sent a token.
 	Reviewer TokenReviewer
 
+	// ClientCAs is the fiberd CA, which a caller's client certificate must
+	// chain to. Without it every caller is refused.
+	ClientCAs *x509.CertPool
+
 	// Cache reads from the informers.
 	Cache client.Reader
 
@@ -145,6 +150,8 @@ type Config struct {
 type Handler struct {
 	issuer         *grant.Issuer
 	reviewer       TokenReviewer
+	clientCAs      *x509.CertPool
+	cache          client.Reader
 	live           client.Reader
 	fresh          client.Reader
 	workload       workload.Workload
@@ -160,6 +167,8 @@ func NewHandler(c Config) *Handler {
 	return &Handler{
 		issuer:         c.Issuer,
 		reviewer:       c.Reviewer,
+		clientCAs:      c.ClientCAs,
+		cache:          c.Cache,
 		live:           c.Live,
 		fresh:          workload.CacheThenLive(c.Cache, c.Live),
 		workload:       c.Workload,
@@ -171,12 +180,13 @@ func NewHandler(c Config) *Handler {
 	}
 }
 
-// Routes serves the grant route beside core's discovery and key set. The
-// route is registered without a method, so a wrong method hears a JSON 405
-// from route and not the mux's text.
+// Routes serves the grant routes of Pods and callers beside core's
+// discovery and key set. The routes are registered without a method, so a
+// wrong method hears a JSON 405 from route and not the mux's text.
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(GrantPath, h.route(h.serveGrant))
+	mux.Handle(CallerGrantPath, h.route(h.serveCallerGrants))
 	mux.Handle("/", h.issuer.Handler())
 	return mux
 }

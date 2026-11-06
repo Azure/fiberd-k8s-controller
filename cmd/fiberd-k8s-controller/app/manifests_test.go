@@ -93,6 +93,8 @@ func TestControllerManifests(t *testing.T) {
 		{name: "--tls-private-key-file directory", got: path.Dir(flags["tls-private-key-file"]), want: mountPath},
 		{name: "--tls-cert-file base", got: path.Base(flags["tls-cert-file"]), want: "tls.crt"},
 		{name: "--tls-private-key-file base", got: path.Base(flags["tls-private-key-file"]), want: "tls.key"},
+		{name: "--client-ca-file directory", got: path.Dir(flags["client-ca-file"]), want: mountPath},
+		{name: "--client-ca-file base", got: path.Base(flags["client-ca-file"]), want: "ca.crt"},
 		{name: "tls mount readOnly", got: mount["readOnly"], want: true},
 		{name: "readiness probe path", got: get(t, container, "readinessProbe", "httpGet", "path"), want: "/readyz"},
 		{name: "readiness probe port", got: get(t, container, "readinessProbe", "httpGet", "port"), want: "probes"},

@@ -581,11 +581,18 @@ func grantToken(issuerURL string) corev1.Volume {
 	}}}
 }
 
+// ServiceHost is the name of the grant's Service in namespace, which every
+// grant Pod's certificate carries. A caller dials a Pod's address and
+// verifies this name.
+func ServiceHost(serviceName, namespace string) string {
+	return serviceName + "." + namespace + ".svc"
+}
+
 // tlsCSIVolume asks the csi-driver for a certificate that names the grant's
 // Service. fiberd serves mutual TLS with its tls.crt and tls.key, trusts its
 // ca.crt for callers and reads the issuer's key set through it too.
 func tlsCSIVolume(cg *v1alpha1.CapacityGrant, serviceName string) corev1.Volume {
-	host := serviceName + "." + cg.Namespace + ".svc"
+	host := ServiceHost(serviceName, cg.Namespace)
 	return corev1.Volume{Name: tlsVolume, VolumeSource: corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{
 		Driver:   csiDriverName,
 		ReadOnly: ptr.To(true),

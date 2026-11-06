@@ -1,6 +1,6 @@
 # fiberd-k8s-controller
 
-![A tenant applies a CapacityGrant once. The controller reconciles it into one Deployment and one Service, Kubernetes schedules the grant Pod, and the Pod fetches its own signed grant from the controller with a bound token. fiberd in the Pod verifies the grant, warms the zygote and joins the Service. Callers then dial the Service over mutual TLS, Clone a fiber from the warm zygote, get its endpoint and fence, and connect to it directly.](./docs/images/controller-hero.svg)
+![A tenant applies a CapacityGrant once. The controller reconciles it into one Deployment and one Service, Kubernetes schedules the grant Pod, and the Pod fetches its own signed grant from the controller with a bound token. fiberd in the Pod verifies the grant, warms the zygote and joins the Service. Callers then dial each grant Pod's address over mutual TLS with that Pod's grant, verify the Service name its certificate carries, Clone a fiber from the warm zygote, get its endpoint and fence, and connect to it directly.](./docs/images/controller-hero.svg)
 
 fiberd serves fast clones of one container template under signed capacity grants.
 This controller lets a tenant ask for that capacity with a `CapacityGrant` object, and it runs the matching fiberd grant Pod.
@@ -42,4 +42,6 @@ A CapacityGrant's args may name only the fiberd flags a tenant sets. [`pkg/workl
 
 A CapacityGrant may mount a volume only at or under `/data` for data volumes, `/config` for config files or `/secrets` for Secrets. The same holds for a device path and a termination message path. fiberd's images keep nothing in those directories, so a mount cannot replace anything fiberd runs or trusts.
 
-The project is under construction. A grant Pod fetches and renews its own grant, but a caller cannot fetch one yet. The work is tracked in the issues of this repository.
+A tenant's caller fetches the grants of a CapacityGrant's Pods with a client certificate from `fiberd-ca` whose key the CapacityGrant names, as the [design](./docs/design/controller.md#how-a-caller-gets-its-grants) describes.
+
+The project is under construction. The work is tracked in the issues of this repository.

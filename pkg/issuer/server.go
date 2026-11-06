@@ -96,10 +96,17 @@ func NewServer(ctx context.Context, addr string, handler http.Handler, getCertif
 // Go ignores cipher suite settings for it. NextProtos is set by hand
 // because a pre-bound tls.Listener served with Serve never passes through
 // ServeTLS, which is where Go would otherwise advertise HTTP/2.
+//
+// A client certificate is asked for but not verified here. A grant Pod,
+// discovery and the key set need none, and the caller route verifies one
+// only after the per-address limit, so a flood of bad certificates costs
+// no chain checks. Go still checks that the client holds the certificate's
+// key.
 func serverTLS(getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *tls.Config {
 	return &tls.Config{
 		MinVersion:     tls.VersionTLS13,
 		GetCertificate: getCertificate,
+		ClientAuth:     tls.RequestClientCert,
 		NextProtos:     []string{"h2", "http/1.1"},
 	}
 }

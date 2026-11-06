@@ -80,13 +80,17 @@ type Options struct {
 	// TLSKeyFile is the PEM private key of TLSCertFile.
 	TLSKeyFile string
 
+	// ClientCAFile is the PEM fiberd CA that a caller's client certificate
+	// must chain to. It is read once at start, since the CA does not rotate.
+	ClientCAFile string
+
 	// Limits bounds how often the grant route answers.
 	Limits issuer.RateLimits
 }
 
 // NewOptions returns every option at its default. The namespace comes from
-// $POD_NAMESPACE as it reads now. The issuer URL and the serving
-// certificate and key files have no default.
+// $POD_NAMESPACE as it reads now. The issuer URL, the serving certificate
+// and key files and the client CA file have no default.
 func NewOptions() *Options {
 	return &Options{
 		Template: podtemplate.Options{
@@ -135,16 +139,18 @@ func (o *Options) AddFlags(fs *flag.FlagSet) {
 		"The issuer listener serves this PEM certificate for OIDC discovery and the JSON Web Key Set. It is required.")
 	fs.StringVar(&o.TLSKeyFile, "tls-private-key-file", o.TLSKeyFile,
 		"The PEM private key of --tls-cert-file. It is required.")
+	fs.StringVar(&o.ClientCAFile, "client-ca-file", o.ClientCAFile,
+		"A caller fetching its grants presents a client certificate that chains to this PEM CA bundle, the fiberd CA. It is read once at start and is required.")
 	fs.Float64Var(&o.Limits.PerIP, "grant-rate-per-ip", o.Limits.PerIP,
 		"Each replica answers one client address this many grant requests per second.")
 	fs.Float64Var(&o.Limits.Global, "grant-rate", o.Limits.Global,
 		"Each replica answers this many grant requests per second from all clients together.")
 	fs.DurationVar(&o.Limits.PodInterval, "grant-pod-interval", o.Limits.PodInterval,
-		"Each replica lets one Pod earn one more grant request in this time, after a small burst.")
+		"Each replica lets one Pod, and one caller, earn one more grant request in this time, after a small burst.")
 }
 
 // Validate reports every problem in o before any API call. It does not
-// read the certificate and key files, since NewManager reports a missing or
+// read the certificate, key and CA files, since NewManager reports a missing or
 // bad one with the real error.
 func (o *Options) Validate() error {
 	var errs []error
@@ -167,6 +173,9 @@ func (o *Options) Validate() error {
 	}
 	if o.TLSKeyFile == "" {
 		errs = append(errs, errors.New("--tls-private-key-file is required"))
+	}
+	if o.ClientCAFile == "" {
+		errs = append(errs, errors.New("--client-ca-file is required"))
 	}
 	if err := validRate("--grant-rate-per-ip", o.Limits.PerIP); err != nil {
 		errs = append(errs, err)

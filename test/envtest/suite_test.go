@@ -4,14 +4,20 @@ package envtest_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"flag"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +30,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	"github.com/Azure/fiberd/pkg/tlsconf/tlsconftest"
 
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 	"github.com/Azure/fiberd-k8s-controller/cmd/fiberd-k8s-controller/app"
@@ -70,6 +78,11 @@ var issuerAddr string
 // issuerRoots trusts only the issuer's self-signed serving certificate, so
 // a client verifies the listener as a grant Pod would.
 var issuerRoots *x509.CertPool
+
+// fiberdCA stands in for ClusterIssuer fiberd-ca. The manager's
+// --client-ca-file holds it, and a caller's client certificate comes from
+// it.
+var fiberdCA tlsconftest.Pair
 
 func TestMain(m *testing.M) {
 	os.Exit(run(m))
@@ -203,10 +216,12 @@ func startManager(ctx context.Context, env *envtest.Environment, tlsDir string) 
 }
 
 // controllerOptions parses the flags the way main does, so the defaults
-// are the shipped ones. The probe and issuer ports are free ones on the
-// loopback address, since two packages may run at once. The serving pair
-// is self-signed for issuerHost and written to tlsDir. issuerRoots trusts
-// only that pair.
+// are the shipped ones, except a short --grant-pod-interval, since the
+// caller cases poll one caller's grants. The probe and issuer ports are
+// free ones on the loopback address, since two packages may run at once.
+// The serving pair is self-signed for issuerHost and written to tlsDir.
+// issuerRoots trusts only that pair. fiberdCA is written there as the
+// client CA.
 func controllerOptions(tlsDir string) (*app.Options, error) {
 	addrs, err := freeLoopbackAddrs(2)
 	if err != nil {
@@ -222,6 +237,13 @@ func controllerOptions(tlsDir string) (*app.Options, error) {
 	if err := pair.Write(certFile, keyFile); err != nil {
 		return nil, err
 	}
+	if fiberdCA, err = newCA(); err != nil {
+		return nil, err
+	}
+	caFile := filepath.Join(tlsDir, "ca.crt")
+	if err := os.WriteFile(caFile, fiberdCA.CertPEM(), 0o600); err != nil {
+		return nil, err
+	}
 	fs := flag.NewFlagSet("fiberd-k8s-controller", flag.ContinueOnError)
 	o := app.NewOptions()
 	o.AddFlags(fs)
@@ -232,10 +254,39 @@ func controllerOptions(tlsDir string) (*app.Options, error) {
 		"--issuer-bind-address=" + issuerAddr,
 		"--tls-cert-file=" + certFile,
 		"--tls-private-key-file=" + keyFile,
+		"--client-ca-file=" + caFile,
+		"--grant-pod-interval=10ms",
 	}); err != nil {
 		return nil, err
 	}
 	return o, nil
+}
+
+// newCA is a CA made without a testing.TB, which TestMain lacks.
+// tlsconftest issues the callers' certificates from it.
+func newCA() (tlsconftest.Pair, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tlsconftest.Pair{}, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "fiberd-ca"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return tlsconftest.Pair{}, err
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return tlsconftest.Pair{}, err
+	}
+	return tlsconftest.Pair{Cert: cert, Key: key}, nil
 }
 
 // freeLoopbackAddrs returns n loopback addresses with ports nothing listens

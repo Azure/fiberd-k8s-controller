@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="660" viewBox="0 0 1000 660" role="img" aria-labelledby="controller-hero-title controller-hero-desc">
   <title id="controller-hero-title">Ask for capacity once. Clone fibers inside the Pod.</title>
-  <desc id="controller-hero-desc">Setup, once: 1, a tenant applies a CapacityGrant; 2, the controller watches it and creates a Deployment, drawn as a frame holding one grant Pod, which holds one container named fiberd, which holds the fiberd process, the warm zygote and the fibers forked from it; 3, fiberd fetches the Pod's own grant from the controller. Requests, repeat: 4, the tenant's app asks the Service for a fiber, the Service selects the Pod and the request reaches fiberd; 5, fiberd answers with the fiber's address; 6, the app talks to that fiber directly.</desc>
+  <desc id="controller-hero-desc">Setup, once: 1, a tenant applies a CapacityGrant; 2, the controller watches it and creates a Deployment, drawn as a frame holding one grant Pod, which holds one container named fiberd, which holds the fiberd process, the warm zygote and the fibers forked from it; 3, fiberd fetches the Pod's own grant from the controller. Requests, repeat: 4, the tenant's app, the caller, dials the Pod's address over mutual TLS with that Pod's grant and asks fiberd for a fiber, verifying the Service's name, which the Service's Pods carry on their certificates; 5, fiberd answers with the fiber's address; 6, the app talks to that fiber directly.</desc>
   <style>
     :root{--bg:#f7f9fc;--panel:#fff;--ink:#172033;--muted:#5d6b7d;--border:#b8c4d4;--blue:#3165b5;--blue-bg:#eaf1ff;--teal:#13776f;--teal-bg:#e8f7f4;--violet:#704aa1;--violet-bg:#f2edfa;--amber:#a76500;--amber-bg:#fff3d6}
     @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#a3adba;--border:#3d4652;--blue:#79a7ff;--blue-bg:#17243d;--teal:#53c7b8;--teal-bg:#102923;--violet:#c09cff;--violet-bg:#251b35;--amber:#f0b44d;--amber-bg:#30240f}}
@@ -39,7 +39,9 @@
   <path class="actor" d="M76 440V431C76 411 124 411 124 431V440"/>
 
   <rect class="box b-blue" x="180" y="370" width="200" height="80" rx="4"/>
-  <text class="name blue" x="200" y="416">Service</text>
+  <text class="name blue" x="200" y="400">Service</text>
+  <text class="note" x="200" y="424">its name is on each</text>
+  <text class="note" x="200" y="442">Pod's certificate</text>
 
   <rect class="frame b-violet" x="600" y="120" width="360" height="480" rx="12"/>
   <text class="name violet" x="616" y="146">Deployment</text>
@@ -86,11 +88,10 @@
   <text class="num teal" x="470" y="295">3</text>
   <text class="note" x="488" y="295">fetch grant</text>
 
-  <path class="flow f-blue call" d="M128 410H180" marker-end="url(#controller-hero-blue)"/>
-  <circle class="n-blue" cx="190" cy="352" r="11"/>
-  <text class="num blue" x="190" y="357">4</text>
-  <text class="note" x="208" y="357">ask for a fiber</text>
-  <path class="flow f-blue call" d="M380 410H656" marker-end="url(#controller-hero-blue)"/>
+  <path class="flow f-blue call" d="M128 400H150V358H656" marker-end="url(#controller-hero-blue)"/>
+  <circle class="n-blue" cx="190" cy="340" r="11"/>
+  <text class="num blue" x="190" y="345">4</text>
+  <text class="note" x="208" y="345">dial a Pod, verify the Service name</text>
   <path class="flow f-blue selects" d="M380 440H620" marker-end="url(#controller-hero-blue)"/>
   <text class="note" x="500" y="458" text-anchor="middle">selects</text>
 

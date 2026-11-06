@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -80,8 +82,8 @@ const (
 // NewManager returns a manager that runs the CapacityGrant reconciler and
 // the issuer's HTTPS listener with o, which the caller has validated. It
 // does not start anything. It loads the grant key ring and reads the
-// serving certificate before it returns, so a missing Secret permission or
-// certificate fails startup with a clear error.
+// serving certificate and client CA before it returns, so a missing Secret
+// permission, certificate or CA fails startup with a clear error.
 //
 // Every replica syncs its informers, so a standby is warm when it takes
 // over, and /readyz holds until that sync is done. Only the leader
@@ -150,9 +152,14 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 	if err != nil {
 		return nil, fmt.Errorf("read the serving certificate: %w", err)
 	}
+	clientCAs, err := loadPool(o.ClientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read the client CA: %w", err)
+	}
 	handler := issuer.NewHandler(issuer.Config{
 		Issuer:         &grant.Issuer{Ring: ring, URL: o.Template.IssuerURL, Now: clk.Now},
 		Reviewer:       &issuer.APITokenReviewer{Client: mgr.GetClient(), IssuerURL: o.Template.IssuerURL},
+		ClientCAs:      clientCAs,
 		Cache:          mgr.GetCache(),
 		Live:           mgr.GetAPIReader(),
 		Workload:       workload,
@@ -177,6 +184,20 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 	}
 
 	return mgr, nil
+}
+
+// loadPool reads a PEM CA bundle. A file with no certificate is an error,
+// since an empty pool would refuse every caller without saying why.
+func loadPool(path string) (*x509.CertPool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(b) {
+		return nil, fmt.Errorf("%s holds no PEM certificate", path)
+	}
+	return pool, nil
 }
 
 // newScheme holds the built-in types and the fiberd.io types.

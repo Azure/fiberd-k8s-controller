@@ -191,11 +191,18 @@ func newGrantChain(t *testing.T, name string) *grantChain {
 	ns := tenantNamespace(t, true)
 	onboardGrantAccount(t, ns)
 	d, _ := waitForObjects(t, createGrant(t, ns, name))
+	return newReplicaSet(t, d, 1)
+}
+
+// newReplicaSet creates revision n of d, the ReplicaSet the Deployment
+// controller would have made from d's template as it is now.
+func newReplicaSet(t *testing.T, d *appsv1.Deployment, n int) *grantChain {
+	t.Helper()
 	ref := metav1.NewControllerRef(d, appsv1.SchemeGroupVersion.WithKind("Deployment"))
 	rs := &appsv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace:       ns,
-			Name:            d.Name + "-1",
+			Namespace:       d.Namespace,
+			Name:            fmt.Sprintf("%s-%d", d.Name, n),
 			Labels:          d.Spec.Template.Labels,
 			OwnerReferences: []metav1.OwnerReference{*ref},
 		},
