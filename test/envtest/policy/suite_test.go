@@ -56,6 +56,7 @@ const (
 
 	// The messages below are cut from config/policy, so a reworded rule
 	// fails here rather than passing on another rule's refusal.
+	envNameMessage     = "must match ^FIBERD_TENANT_[A-Z0-9_]+$"
 	volumeMessage      = "is not an emptyDir, configMap"
 	imageListMessage   = "is not under a repository listed"
 	privilegedMessage  = "is allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"

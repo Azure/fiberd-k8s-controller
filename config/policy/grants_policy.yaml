@@ -64,13 +64,14 @@ spec:
     # equal to podtemplate's tenantBoolFlags.
     - name: bareArgs
       expression: "['-gvisor-templates-on-disk', '--gvisor-templates-on-disk']"
-    # The overlay sets the Pod identity, fiberd trusts the issuer through its
-    # process's root pool and proxy settings, and the loader and runtime
-    # variables would run tenant code inside fiberd or bend its TLS.
-    - name: ownedEnv
-      expression: "['POD_NAME', 'POD_NAMESPACE', 'POD_UID', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy', 'GODEBUG', 'LD_PRELOAD', 'LD_LIBRARY_PATH']"
+    # The only shape a tenant env name may take. A test keeps it equal to
+    # podtemplate.EnvNamePattern, which says why names sit under one root.
+    - name: envNamePattern
+      expression: "'^FIBERD_TENANT_[A-Z0-9_]+$'"
     - name: envNames
       expression: "has(variables.container.env) ? variables.container.env.map(e, e.name) : []"
+    - name: outsideEnv
+      expression: "variables.envNames.filter(n, !n.matches(variables.envNamePattern))"
     - name: volumes
       expression: "has(object.spec.podTemplate.spec.volumes) ? object.spec.podTemplate.spec.volumes : []"
     # The kubelet bind-mounts a node file at terminationMessagePath, so it
@@ -156,9 +157,11 @@ spec:
       messageExpression: "'helper image ' + variables.helperImage + ' is not under a repository listed in GrantPolicy default spec.helperImages'"
       message: "spec.helperImage is not under a repository listed in GrantPolicy default spec.helperImages"
       reason: Forbidden
-    - expression: "!variables.envNames.exists(n, n in variables.ownedEnv)"
-      messageExpression: "'env ' + variables.envNames.filter(n, n in variables.ownedEnv)[0] + ' is not a variable a tenant may set'"
-      message: "a podTemplate env variable is not one a tenant may set"
+    # The API server drops a messageExpression result that holds a line
+    # break and uses message, so message states the pattern too.
+    - expression: "variables.outsideEnv.size() == 0"
+      messageExpression: "'env ' + variables.outsideEnv[0] + ' must match ' + variables.envNamePattern"
+      message: "a podTemplate env name must match ^FIBERD_TENANT_[A-Z0-9_]+$"
       reason: Forbidden
     - expression: "!variables.templateKeys.exists(k, k.contains('.fiberd.io/') || variables.reservedKeyPrefixes.exists(p, k.startsWith(p)))"
       messageExpression: "'podTemplate key ' + variables.templateKeys.filter(k, k.contains('.fiberd.io/') || variables.reservedKeyPrefixes.exists(p, k.startsWith(p)))[0] + ' is reserved'"

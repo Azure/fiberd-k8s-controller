@@ -6,7 +6,7 @@
 // leaves every other field as the tenant wrote it. The overlay sets only
 // what fiberd needs to run as a grant home. That is the labels the
 // controller selects on, the service account, the readiness gate, fiberd's
-// volumes, the image, the Pod identity variables, the trusted CA file, the
+// volumes, service links, the image, the Pod identity, the trusted CA file, the
 // gRPC port, the fiberd flags, the probes, Guaranteed resources, the
 // security context of the runtime and, for hyperlight, the init container
 // that installs the helper. Where a tenant field would collide
@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -129,22 +130,15 @@ const (
 	certReusePrivateKey = "false"
 )
 
-// The variables a tenant may not set, grouped by why. A test keeps their
-// union equal to the policy's ownedEnv.
-var (
-	// identityEnv is the Pod identity the overlay adds. -node-id expands
-	// POD_NAME, so a tenant value would change fiberd's identity.
-	identityEnv = []string{envPodName, envPodNamespace, envPodUID}
+// EnvNamePattern is the only shape a tenant env name may take. The root is a
+// prefix fiberd core owns, which keeps tenant names apart from every name a
+// program in the image reads, today's and later ones alike. Only the
+// Hyperlight helper reads them, and they never reach the zygote or fibers.
+// Values stay free, so valueFrom needs no rule. The admission policy in
+// config/policy repeats the pattern, and a test keeps the two equal.
+const EnvNamePattern = `^FIBERD_TENANT_[A-Z0-9_]+$`
 
-	// trustEnv is where Go reads its trust roots and proxies, so a tenant
-	// value would let the Pod believe a tenant's issuer.
-	trustEnv = []string{envSSLCertFile, "SSL_CERT_DIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
-
-	// loaderEnv is read by the Go runtime and the dynamic loader. GODEBUG can
-	// relax fiberd's TLS checks, and the loader variables load a tenant's
-	// library into fiberd.
-	loaderEnv = []string{"GODEBUG", "LD_PRELOAD", "LD_LIBRARY_PATH"}
-)
+var envNamePattern = regexp.MustCompile(EnvNamePattern)
 
 // ownedVolumes are the overlay's volumes. A test keeps them equal to the
 // policy's ownedVolumes.
@@ -291,7 +285,7 @@ func checkShape(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 			errs = append(errs, field.Forbidden(cPath.Child("lifecycle"), "a hook would run a tenant command with fiberd's capabilities"))
 		}
 		if len(c.EnvFrom) > 0 {
-			errs = append(errs, field.Forbidden(cPath.Child("envFrom"), "a source could set SSL_CERT_FILE or a proxy variable and change which issuer fiberd trusts"))
+			errs = append(errs, field.Forbidden(cPath.Child("envFrom"), "a source's key names are unknown at admission"))
 		}
 		if sc := c.SecurityContext; sc != nil {
 			errs = append(errs, checkUnconfined(cPath.Child("securityContext"), sc.SELinuxOptions != nil, sc.WindowsOptions != nil)...)
@@ -372,30 +366,17 @@ func containerNames(cs []corev1.Container) []string {
 	return names
 }
 
-// checkEnv refuses tenant variables that would shadow the Pod identity,
-// change which issuer fiberd trusts, or reach into fiberd's process.
+// checkEnv refuses a tenant variable whose name does not match
+// EnvNamePattern. The name is quoted because it is the tenant's text, and the
+// error goes into the grant's status as one line.
 func checkEnv(fld *field.Path, env []corev1.EnvVar) field.ErrorList {
 	var errs field.ErrorList
 	for i, e := range env {
-		if why := envRefusal(e.Name); why != "" {
-			errs = append(errs, field.Forbidden(fld.Index(i).Child("name"), e.Name+" "+why))
+		if !envNamePattern.MatchString(e.Name) {
+			errs = append(errs, field.Forbidden(fld.Index(i).Child("name"), fmt.Sprintf("%q must match %s", e.Name, EnvNamePattern)))
 		}
 	}
 	return errs
-}
-
-// envRefusal says why a tenant may not set the variable name, and is empty
-// for a variable it may set.
-func envRefusal(name string) string {
-	switch {
-	case slices.Contains(identityEnv, name):
-		return "is set by the controller"
-	case slices.Contains(trustEnv, name):
-		return "would change which issuer fiberd trusts"
-	case slices.Contains(loaderEnv, name):
-		return "would bend fiberd's TLS or run tenant code inside fiberd"
-	}
-	return ""
 }
 
 // checkReservedKeys refuses the tenant's template keys that a reserved
@@ -450,10 +431,13 @@ func overlayMeta(meta *metav1.ObjectMeta, cg *v1alpha1.CapacityGrant, grantHash 
 // image pull secrets, priority and every other tenant field pass through.
 // The service account token is mounted because the home reads its Pod and
 // patches its status through it. fiberd hides that path from fibers by
-// default.
+// default. Service links stay off so that Service names pick no env names.
+// The kubelet still adds the kubernetes Service's variables, which the
+// in-cluster client reads.
 func overlayPodSpec(spec *corev1.PodSpec, serviceAccount string) {
 	spec.ServiceAccountName = serviceAccount
 	spec.AutomountServiceAccountToken = ptr.To(true)
+	spec.EnableServiceLinks = ptr.To(false)
 	spec.RestartPolicy = corev1.RestartPolicyAlways
 	gate := corev1.PodReadinessGate{ConditionType: v1alpha1.PodConditionZygoteReady}
 	if !slices.Contains(spec.ReadinessGates, gate) {

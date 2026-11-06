@@ -160,6 +160,15 @@ func setEnv(name string) mutation {
 	}
 }
 
+// setEnvFromSecret sets one variable from a Secret key.
+func setEnvFromSecret(name string) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		testutil.SetContainerField(t, u, "env", []any{map[string]any{"name": name, "valueFrom": map[string]any{
+			"secretKeyRef": map[string]any{"name": "helper", "key": "token"},
+		}}})
+	}
+}
+
 // setTemplateKey sets a key in podTemplate.metadata, where kind is labels
 // or annotations.
 func setTemplateKey(kind, key string) mutation {
@@ -321,27 +330,27 @@ func TestPolicyRefusals(t *testing.T) {
 			name:   "admits a listed image by digest without a tag",
 			mutate: setImage("ghcr.io/azure/fiberd@" + testDigest),
 		},
+		{name: "admits an env name under the root", mutate: setEnv("FIBERD_TENANT_LOG_LEVEL")},
+		{name: "admits an env name under the root with valueFrom", mutate: setEnvFromSecret("FIBERD_TENANT_TOKEN")},
+		{name: "refuses env PATH", mutate: setEnv("PATH"), reason: metav1.StatusReasonForbidden, substr: "env PATH " + envNameMessage},
+		{name: "refuses env POD_NAME", mutate: setEnv("POD_NAME"), reason: metav1.StatusReasonForbidden, substr: "env POD_NAME " + envNameMessage},
+		{name: "refuses env SSL_CERT_FILE", mutate: setEnv("SSL_CERT_FILE"), reason: metav1.StatusReasonForbidden, substr: "env SSL_CERT_FILE " + envNameMessage},
+		{name: "refuses env LD_AUDIT", mutate: setEnv("LD_AUDIT"), reason: metav1.StatusReasonForbidden, substr: "env LD_AUDIT " + envNameMessage},
+		{name: "refuses env BASH_ENV", mutate: setEnv("BASH_ENV"), reason: metav1.StatusReasonForbidden, substr: "env BASH_ENV " + envNameMessage},
+		{name: "refuses env GRPC_ENFORCE_ALPN_ENABLED", mutate: setEnv("GRPC_ENFORCE_ALPN_ENABLED"), reason: metav1.StatusReasonForbidden, substr: "env GRPC_ENFORCE_ALPN_ENABLED " + envNameMessage},
+		{name: "refuses a hand-written name outside the root", mutate: setEnv("EXAMPLE_CLIENT_ID"), reason: metav1.StatusReasonForbidden, substr: "env EXAMPLE_CLIENT_ID " + envNameMessage},
+		{name: "refuses a name outside the root with valueFrom", mutate: setEnvFromSecret("PATH"), reason: metav1.StatusReasonForbidden, substr: "env PATH " + envNameMessage},
+		{name: "refuses a lowercase env name", mutate: setEnv("fiberd_tenant_x"), reason: metav1.StatusReasonForbidden, substr: "env fiberd_tenant_x " + envNameMessage},
+		{name: "refuses a lowercase suffix under the root", mutate: setEnv("FIBERD_TENANT_x"), reason: metav1.StatusReasonForbidden, substr: "env FIBERD_TENANT_x " + envNameMessage},
+		{name: "refuses the bare root", mutate: setEnv("FIBERD_TENANT_"), reason: metav1.StatusReasonForbidden, substr: "env FIBERD_TENANT_ " + envNameMessage},
+		{name: "refuses a name that only holds the root", mutate: setEnv("MY_FIBERD_TENANT_X"), reason: metav1.StatusReasonForbidden, substr: "env MY_FIBERD_TENANT_X " + envNameMessage},
 		{
-			name:   "refuses the trust root env variable",
-			mutate: setEnv("SSL_CERT_FILE"),
+			// The API server uses the rule's message for a name with a line
+			// break, so the case cannot expect the name.
+			name:   "refuses a suffix after a newline",
+			mutate: setEnv("FIBERD_TENANT_X\nPATH"),
 			reason: metav1.StatusReasonForbidden,
-			substr: "env SSL_CERT_FILE is not a variable a tenant may set",
-		},
-		{
-			name:   "refuses a Pod identity env variable",
-			mutate: setEnv("POD_NAME"),
-			reason: metav1.StatusReasonForbidden,
-			substr: "env POD_NAME is not a variable a tenant may set",
-		},
-		{
-			name:   "refuses a loader env variable",
-			mutate: setEnv("LD_PRELOAD"),
-			reason: metav1.StatusReasonForbidden,
-			substr: "env LD_PRELOAD is not a variable a tenant may set",
-		},
-		{
-			name:   "admits a harmless env variable",
-			mutate: setEnv("LOG_LEVEL"),
+			substr: envNameMessage,
 		},
 		{
 			name:   "refuses a fiberd.io label",

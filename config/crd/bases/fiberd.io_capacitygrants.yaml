@@ -9010,8 +9010,7 @@ spec:
                   rule: '!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].lifecycle)'
                 - fieldPath: .spec.containers
                   message: podTemplate.spec.containers[0].envFrom is not allowed,
-                    a source could set SSL_CERT_FILE or a proxy variable and change
-                    which issuer fiberd trusts
+                    a source's key names are unknown at admission
                   reason: FieldValueForbidden
                   rule: '!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].envFrom)'
                 - fieldPath: .spec
