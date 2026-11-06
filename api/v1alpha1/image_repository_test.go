@@ -66,9 +66,15 @@ func TestRegistryPattern(t *testing.T) {
 		want     bool
 	}{
 		{registry: "ghcr.io/team-a/zygotes", want: true},
-		{registry: "https://ghcr.io/team-a/zygotes", want: true},
 		{registry: "http://registry.local:5000/zygotes", want: true},
 		{registry: "localhost:5000/zygotes", want: true},
+
+		// A bare repository already means TLS, and fiberd reads only http:// as plain HTTP.
+		{registry: "https://ghcr.io/team-a/zygotes", want: false},
+		{registry: "HTTP://ghcr.io/team-a/zygotes", want: false},
+
+		// The scheme does not lift the rule that a host alone never passes.
+		{registry: "http://ghcr.io", want: false},
 
 		// fiberd appends @<digest> itself.
 		{registry: "ghcr.io/team-a/zygotes:latest", want: false},

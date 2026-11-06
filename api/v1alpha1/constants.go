@@ -19,19 +19,23 @@ const (
 	// test checks it.
 	DigestPattern = "^sha256:[a-f0-9]{64}$"
 
-	// ImageRepositoryPattern is the form of a GrantPolicy images or helperImages entry, a fully
-	// qualified repository with no tag or digest. The host is localhost, a name with a dot, or a
-	// name with a port, so a bare name such as library/fiberd never passes for a host, and at
-	// least one path component follows, so an entry can never admit a whole registry. The path
-	// grammar is the OCI distribution reference's. The CRD markers on spec.images and
-	// spec.helperImages hold the same pattern, and a test checks it.
-	ImageRepositoryPattern = `^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+	// repositoryBody is a fully qualified repository with no tag or digest. The host is
+	// localhost, a name with a dot, or a name with a port, so a bare name such as
+	// library/fiberd never passes for a host, and at least one path component follows, so an
+	// entry can never admit a whole registry. The path grammar is the OCI distribution
+	// reference's.
+	repositoryBody = `(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+`
 
-	// RegistryPattern is the form of spec.zygote.registry, an ImageRepositoryPattern
-	// repository with an optional http:// or https:// scheme, as fiberd's -registry takes it.
-	// fiberd appends @<digest>, so a tag or digest never belongs here. The CRD marker holds
-	// the same pattern, and a test checks it.
-	RegistryPattern = `^(https?://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+	// ImageRepositoryPattern is the form of a GrantPolicy images or helperImages entry. The CRD
+	// markers on spec.images and spec.helperImages hold the same pattern, and a test checks it.
+	ImageRepositoryPattern = `^` + repositoryBody + `$`
+
+	// RegistryPattern is the form of spec.zygote.registry, a repository with an optional
+	// http:// scheme, as fiberd's -registry takes it. A bare repository already means TLS, so
+	// https:// would only give a repository a second spelling. fiberd appends @<digest>, so a
+	// tag or digest never belongs here. The CRD marker holds the same pattern, and a test
+	// checks it.
+	RegistryPattern = `^(http://)?` + repositoryBody + `$`
 
 	// SealKeySecretKey is the data key of the Secret spec.zygote.sealKeySecretName names. It
 	// holds the fleet's 32-byte symmetric seal key as a JWK.

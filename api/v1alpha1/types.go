@@ -118,7 +118,7 @@ type ZygoteSpec struct {
 	// is the value of fiberd's -registry flag.
 	// +optional
 	// +kubebuilder:validation:MaxLength=255
-	// +kubebuilder:validation:Pattern=`^(https?://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+	// +kubebuilder:validation:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 	Registry string `json:"registry,omitempty"`
 
 	// sealKeySecretName names a Secret in the grant's namespace that holds the fleet's seal
