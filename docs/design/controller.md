@@ -52,6 +52,8 @@ The helper runs in the fiberd container and not on its own image's base, so the 
 3. The helper is static, or linked against glibc 2.36 or older with only libc, libm and libgcc_s.
 4. The helper answers `helper --version` and speaks the protocol in fiberd's [`hack/hyperlight/PROTOCOL.md`](https://github.com/Azure/fiberd/blob/main/hack/hyperlight/PROTOCOL.md).
 
+Of what a grant writes, the helper sees only names under `FIBERD_TENANT_`. It also sees the variables the controller and the kubelet add, the image's env and what a webhook adds. The `fiberd-helper` init container receives no tenant env.
+
 **Status** holds the observed generation and the `Ready` and `Progressing` conditions, whose reasons the [README](../../README.md#status) lists. A bad spec, a conflict and a refused write each block the pass, so a Deployment built from an earlier spec keeps serving. The last two also record a Warning Event. The controller watches neither RoleBindings nor objects it does not control, so it looks again at a blocked grant after a minute. Everything per Pod stays on the Pod.
 
 ## The life of a grant

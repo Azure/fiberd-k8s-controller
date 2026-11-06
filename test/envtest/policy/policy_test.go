@@ -824,6 +824,22 @@ func TestPolicyHelperImage(t *testing.T) {
 			name:   "admits a listed helper image with a tag and a digest",
 			mutate: setHelperImage(helperRepo + ":0.4.0@" + testDigest),
 		},
+		{
+			name: "admits an env name under the root with a helper image",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setHelperImage(helperRepo+"@"+testDigest)(t, u)
+				setEnv("FIBERD_TENANT_X")(t, u)
+			},
+		},
+		{
+			name: "refuses an env name outside the root with a helper image",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setHelperImage(helperRepo+"@"+testDigest)(t, u)
+				setEnv("PATH")(t, u)
+			},
+			reason: metav1.StatusReasonForbidden,
+			substr: "env PATH " + envNameMessage,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
