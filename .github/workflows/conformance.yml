@@ -1,0 +1,150 @@
+name: conformance
+
+# The kind end-to-end run, on Kubernetes 1.37. Pull requests and pushes run
+# amd64, and a release or a manual run may ask for arm64 as well. It takes no
+# secret, so a fork's pull request runs the same way once approved. The final
+# conformance job is the one required check, so a change to the legs never
+# touches branch protection.
+#
+# Which fiberd a leg tests comes from hack/tests/kind/fiberd-src.sh, the input
+# first, then the FIBERD_VERSION variable, then versions.env, then go.mod. A
+# release calls this workflow with fiberd_ref set to pin and arm64 set to true.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      fiberd_ref:
+        description: main, a commit, a tag, or pin for the go.mod version
+        type: string
+        required: false
+      arm64:
+        description: Add a leg on arm64
+        type: boolean
+        required: false
+        default: false
+  workflow_call:
+    inputs:
+      fiberd_ref:
+        description: main, a commit, a tag, or pin for the go.mod version
+        type: string
+        required: false
+      arm64:
+        description: Add a leg on arm64
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# A new push supersedes a pull request's run. Nothing else is ever cancelled.
+concurrency:
+  group: conformance-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: pick the fiberd legs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      legs: ${{ steps.legs.outputs.legs }}
+    steps:
+      # The merge commit and its first parent, to see what the pull request
+      # does to go.mod.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      # A pull request that moves the pin also tests the pin it sets, since the
+      # selected leg may follow fiberd main and leave that pair untested. The
+      # arm64 input exists only on a manual run or a workflow_call, so pull
+      # requests and pushes never get that leg.
+      - id: legs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FIBERD_REF: ${{ inputs.fiberd_ref }}
+          FIBERD_VERSION: ${{ vars.FIBERD_VERSION }}
+          ARM64: ${{ inputs.arm64 }}
+        run: |
+          . hack/tests/kind/versions.env
+          leg() {
+            jq -cn --arg name "$1" --arg ref "$2" --arg runner "$3" '{name: $name, ref: $ref, runner: $runner}'
+          }
+          legs="$(leg selected "${FIBERD_REF}" ubuntu-24.04)"
+          if [ "${EVENT_NAME}" = pull_request ] &&
+            [ -n "${FIBERD_REF}${FIBERD_VERSION}${FIBERD_DEFAULT_REF}" ] &&
+            git diff HEAD^1 HEAD -- go.mod | grep -E '^[-+][[:space:]]*github\.com/Azure/fiberd ' >/dev/null; then
+            legs="${legs} $(leg pin pin ubuntu-24.04)"
+          fi
+          if [ "${ARM64}" = true ]; then
+            legs="${legs} $(leg arm64 "${FIBERD_REF}" ubuntu-24.04-arm)"
+          fi
+          echo "legs=$(jq -cs . <<<"${legs}")" >>"${GITHUB_OUTPUT}"
+
+  kind:
+    name: kind (fiberd ${{ matrix.leg.name }})
+    needs: plan
+    runs-on: ${{ matrix.leg.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.plan.outputs.legs) }}
+    env:
+      FIBERD_REF: ${{ matrix.leg.ref }}
+      FIBERD_VERSION: ${{ vars.FIBERD_VERSION }}
+      FIBERD_IMAGE_CACHE: bin/e2e/cache/fiberd-images.tar
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      # This writes the summary's top line, the commit under test and its source.
+      - name: Pick the fiberd version
+        id: fiberd
+        run: |
+          hack/tests/kind/fiberd-src.sh
+          sed -n 's/^FIBERD_COMMIT=/commit=/p' bin/e2e/fiberd.env >>"${GITHUB_OUTPUT}"
+      - name: Install kind
+        run: |
+          . hack/tests/kind/versions.env
+          go install "sigs.k8s.io/kind@${KIND_VERSION}"
+      # A hit skips the fiberd image build, so a run goes cold only when its
+      # fiberd commit moves.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin/e2e/cache
+          key: fiberd-images-${{ steps.fiberd.outputs.commit }}-${{ runner.arch }}-${{ hashFiles('hack/tests/kind/grant.Dockerfile') }}
+      - run: make conform-kind
+        env:
+          FIBERD_RESOLVED: "1"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: kind-${{ matrix.leg.name }}
+          path: bin/e2e/artifacts
+          retention-days: 7
+
+  conformance:
+    name: conformance
+    if: always()
+    needs: [plan, kind]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every leg passed
+        env:
+          PLAN: ${{ needs.plan.result }}
+          KIND: ${{ needs.kind.result }}
+        run: |
+          echo "plan ${PLAN}, kind ${KIND}"
+          [ "${PLAN}" = success ] && [ "${KIND}" = success ]

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Installs cert-manager, its csi-driver and the fiberd CA into the cluster of
-# the current kubectl context. Needs kubectl and helm. Safe to run again.
+# Installs cert-manager and its csi-driver into the cluster of the current
+# kubectl context. The chart installs the fiberd CA. Needs kubectl and helm.
+# Safe to run again.
 set -euo pipefail
 
 cd "$(dirname "$0")/../../.."
@@ -17,10 +18,8 @@ die() {
 # shellcheck source-path=SCRIPTDIR source=versions.env
 source hack/tests/kind/versions.env
 
-# config/certs puts the CA in cert-manager's namespace.
 readonly CERTS_DIR=config/certs
 readonly CERT_MANAGER_NAMESPACE=cert-manager
-readonly CA_NAME=fiberd-ca
 
 # Every wait is bounded by this many seconds. Pulling images on a cold kind
 # node is the slow part.
@@ -53,26 +52,19 @@ helm upgrade cert-manager-csi-driver oci://quay.io/jetstack/charts/cert-manager-
   --wait \
   --timeout "${TIMEOUT}s"
 
-log "applying the fiberd CA from ${CERTS_DIR}"
+log "waiting for the cert-manager webhook"
 # cert-manager's Deployments turn Available before its webhook serves, and the
-# API server refuses a Certificate until it does.
+# API server refuses a Certificate until it does. A server-side dry run of the
+# CA's objects reaches the webhook and leaves nothing behind.
 deadline=$((SECONDS + TIMEOUT))
 # A hung webhook call would otherwise outlast the deadline.
-until output="$(kubectl apply -k "${CERTS_DIR}" --request-timeout=30s 2>&1)"; do
+until output="$(kubectl apply -k "${CERTS_DIR}" --dry-run=server --request-timeout=30s 2>&1)"; do
   if ((SECONDS >= deadline)); then
     printf '%s\n' "${output}" >&2
-    die "${CERTS_DIR} still refused after ${TIMEOUT}s"
+    die "the webhook still refuses ${CERTS_DIR} after ${TIMEOUT}s"
   fi
-  log "${CERTS_DIR} refused, retrying in 5s"
+  log "the webhook refused ${CERTS_DIR}, retrying in 5s"
   sleep 5
 done
-printf '%s\n' "${output}"
-
-log "waiting for the fiberd CA to be Ready"
-# Qualified, so another CRD named certificate cannot match.
-kubectl wait "certificates.cert-manager.io/${CA_NAME}" --namespace "${CERT_MANAGER_NAMESPACE}" \
-  --for=condition=Ready --timeout="${TIMEOUT}s"
-kubectl wait "clusterissuers.cert-manager.io/${CA_NAME}" \
-  --for=condition=Ready --timeout="${TIMEOUT}s"
 
 log "done"
