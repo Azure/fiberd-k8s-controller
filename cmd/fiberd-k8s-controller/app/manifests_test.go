@@ -26,18 +26,19 @@ import (
 // configDir is relative to this package, since go test runs in it.
 const configDir = "../../../config"
 
-// TestControllerManifests ties the Deployment, the Service and the serving
-// Certificate to the issuer URL and the flags. The manifests hold literals,
-// and nothing else catches a drift before the controller fails on a cluster.
-// Rows that compare a manifest value with a literal pin values the design
-// fixes, such as the certificate lifetimes and the probe paths, so a silent
-// edit fails.
+// TestControllerManifests ties the Deployment, the Service, the disruption
+// budget and the serving Certificate to the issuer URL and the flags. The
+// manifests hold literals, and nothing else catches a drift before the
+// controller fails on a cluster. Rows that compare a manifest value with a
+// literal pin values the design fixes, such as the certificate lifetimes and
+// the probe paths, so a silent edit fails.
 func TestControllerManifests(t *testing.T) {
 	manager := readDir(t, filepath.Join(configDir, "manager"))
 	certs := readDir(t, filepath.Join(configDir, "certmanager"))
 
 	deploy := find(t, manager, "Deployment", "fiberd-k8s-controller")
 	svc := find(t, manager, "Service", "fiberd-k8s-controller")
+	pdb := find(t, manager, "PodDisruptionBudget", "fiberd-k8s-controller")
 	cert := find(t, certs, "Certificate", "fiberd-k8s-controller-tls")
 
 	container := named(t, objectList(t, deploy.Object, "spec", "template", "spec", "containers"), "manager")
@@ -89,6 +90,7 @@ func TestControllerManifests(t *testing.T) {
 		{name: "issuer URL port", got: issuerURL.Port(), want: get(t, svcHTTPS, "port")},
 		{name: "Service targetPort", got: get(t, svcHTTPS, "targetPort"), want: get(t, named(t, ports, "https"), "name")},
 		{name: "template labels holding the Service selector", got: selected, want: selector},
+		{name: "disruption budget selector", got: stringMap(t, pdb.Object, "spec", "selector", "matchLabels"), want: stringMap(t, deploy.Object, "spec", "selector", "matchLabels")},
 		{name: "container https port", got: get(t, named(t, ports, "https"), "containerPort"), want: bindPort(t, flags, "issuer-bind-address", defaultIssuerAddr)},
 		{name: "container probes port", got: get(t, named(t, ports, "probes"), "containerPort"), want: bindPort(t, flags, "health-probe-bind-address", defaultProbeAddr)},
 		{name: "--tls-cert-file directory", got: path.Dir(flags["tls-cert-file"]), want: mountPath},
@@ -148,8 +150,10 @@ func TestCAManifests(t *testing.T) {
 	}
 }
 
-// TestDefaultKustomization checks the install carries the CA and the
-// serving Certificate.
+// TestDefaultKustomization checks the install carries every part of the
+// controller. An entry dropped from it leaves a cluster without that part
+// and fails nothing else, and without ../policy no grant is checked at
+// admission.
 func TestDefaultKustomization(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(configDir, "default", "kustomization.yaml"))
 	if err != nil {
@@ -161,10 +165,72 @@ func TestDefaultKustomization(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &k); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"../certs", "../certmanager"} {
-		if !slices.Contains(k.Resources, want) {
-			t.Errorf("resources = %q, want it to hold %q", k.Resources, want)
-		}
+	want := []string{"../crd", "../rbac", "../certs", "../certmanager", "../manager", "../policy"}
+	if !slices.Equal(k.Resources, want) {
+		t.Errorf("resources = %q, want %q", k.Resources, want)
+	}
+}
+
+// TestPolicyManifests checks config/policy installs each admission policy
+// with a binding that enforces it. A policy with no binding checks nothing,
+// and the policy envtest reads these files by name, so it never sees what
+// the kustomization lists.
+func TestPolicyManifests(t *testing.T) {
+	objs := readDir(t, filepath.Join(configDir, "policy"))
+
+	for _, name := range []string{"fiberd-grants", "fiberd-grantpolicies"} {
+		t.Run(name, func(t *testing.T) {
+			find(t, objs, "ValidatingAdmissionPolicy", name)
+			binding := find(t, objs, "ValidatingAdmissionPolicyBinding", name)
+			if got := get(t, binding.Object, "spec", "policyName"); got != name {
+				t.Errorf("binding spec.policyName = %q, want %q", got, name)
+			}
+			want := []string{"Deny"}
+			if got := stringList(t, binding.Object, "spec", "validationActions"); !slices.Equal(got, want) {
+				t.Errorf("binding spec.validationActions = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestServiceAccounts ties each service account name to the object that
+// creates it and to the bindings that give it rights. A Pod naming a missing
+// account does not start, and a binding naming the wrong one grants nothing.
+func TestServiceAccounts(t *testing.T) {
+	manager := readDir(t, filepath.Join(configDir, "manager"))
+	rbac := readDir(t, filepath.Join(configDir, "rbac", "controller"))
+	tenant := readDir(t, filepath.Join(configDir, "tenant"))
+
+	deploy := find(t, manager, "Deployment", "fiberd-k8s-controller")
+	controller := find(t, rbac, "ServiceAccount", get(t, deploy.Object, "spec", "template", "spec", "serviceAccountName"))
+	grant := find(t, tenant, "ServiceAccount", podtemplate.DefaultServiceAccount)
+	if got, want := controller.GetNamespace(), deploy.GetNamespace(); got != want {
+		t.Errorf("controller ServiceAccount namespace = %q, want %q", got, want)
+	}
+
+	cases := []struct {
+		name    string
+		binding *unstructured.Unstructured
+		account *unstructured.Unstructured
+	}{
+		{name: "cluster rights of the controller", binding: find(t, rbac, "ClusterRoleBinding", "fiberd-k8s-controller"), account: controller},
+		{name: "leader election rights of the controller", binding: find(t, rbac, "RoleBinding", "fiberd-k8s-controller-leader-election"), account: controller},
+		{name: "tenant rights of the controller", binding: find(t, tenant, "RoleBinding", "fiberd-k8s-controller-tenant"), account: controller},
+		{name: "rights of a grant Pod", binding: find(t, tenant, "RoleBinding", "fiberd-grant"), account: grant},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := named(t, objectList(t, tc.binding.Object, "subjects"), tc.account.GetName())
+			if got := subject["kind"]; got != "ServiceAccount" {
+				t.Errorf("subject kind = %v, want ServiceAccount", got)
+			}
+			// config/tenant fills the namespace of a grant Pod's account and
+			// its subject in per tenant, so both are empty here.
+			namespace, _ := subject["namespace"].(string)
+			if want := tc.account.GetNamespace(); namespace != want {
+				t.Errorf("subject namespace = %q, want %q", namespace, want)
+			}
+		})
 	}
 }
 
