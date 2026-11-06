@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -31,10 +30,6 @@ const (
 	// -jwks-max-stale to the lease, so a grant Pod keeps the standalone
 	// default.
 	defaultLease = time.Hour
-
-	// defaultPodCPU is the CPU limit of a grant Pod whose template sets
-	// none.
-	defaultPodCPU = "500m"
 
 	// defaultProbeAddr is where /healthz and /readyz listen.
 	defaultProbeAddr = ":8081"
@@ -98,7 +93,7 @@ func NewOptions() *Options {
 			Lease:          defaultLease,
 			StaleTTL:       podtemplate.DefaultStaleTTL,
 			EndpointFamily: podtemplate.DefaultEndpointFamily,
-			DefaultCPU:     resource.MustParse(defaultPodCPU),
+			DefaultCPU:     resource.MustParse(podtemplate.DefaultPodCPU),
 			Plaintext:      true,
 			ServiceAccount: podtemplate.DefaultServiceAccount,
 		},
@@ -164,9 +159,6 @@ func (o *Options) Validate() error {
 	} else if msgs := content.IsDNS1123Label(o.Namespace); len(msgs) > 0 {
 		errs = append(errs, fmt.Errorf("--namespace %q is not a valid namespace name: %s", o.Namespace, strings.Join(msgs, ", ")))
 	}
-	if err := validIssuerRoot(o.Template.IssuerURL); err != nil {
-		errs = append(errs, err)
-	}
 	if err := validBindAddr("--health-probe-bind-address", o.ProbeAddr); err != nil {
 		errs = append(errs, err)
 	}
@@ -196,26 +188,6 @@ func (o *Options) Validate() error {
 func validRate(name string, perSecond float64) error {
 	if !(perSecond > 0) || math.IsInf(perSecond, 1) {
 		return fmt.Errorf("%s must be a positive number, got %v", name, perSecond)
-	}
-	return nil
-}
-
-// validIssuerRoot requires an https issuer URL with nothing after the host,
-// since the listener speaks TLS only and core mounts discovery at the URL's
-// root. A URL the template checks already refuse is left to them.
-func validIssuerRoot(s string) error {
-	u, err := url.Parse(s)
-	if err != nil {
-		return nil //nolint:nilerr // The template check reports an unparsable URL.
-	}
-	if u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return nil
-	}
-	if u.Scheme == "http" {
-		return fmt.Errorf("--issuer-url %q must use https, since the controller serves it over TLS only", s)
-	}
-	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(s, "?#") {
-		return fmt.Errorf("--issuer-url %q must have no path, query or fragment, since discovery is served at its root", s)
 	}
 	return nil
 }

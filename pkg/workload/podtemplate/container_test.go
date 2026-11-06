@@ -138,9 +138,9 @@ func TestBuildArgs(t *testing.T) {
 			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.Zygote.Command = []string{"/app/zygote", "$(HOME)"}
 			}},
-			opts: func(o *Options) { o.IssuerURL = "https://issuer.example/$tenant" },
+			opts: func(o *Options) { o.IssuerURL = "https://issuer$tenant.example" },
 			want: withArg(withArg(wantProcArgs(),
-				"-issuer=", "-issuer=https://issuer.example/$$tenant"),
+				"-issuer=", "-issuer=https://issuer$$tenant.example"),
 				"-template=", "-template="+testDigest+"=/app/zygote $$(HOME)"),
 		},
 	}
