@@ -467,6 +467,7 @@ func TestBuildMountPaths(t *testing.T) {
 // TestBuildOverlayAvoidsMountRoots ties the overlay to the tenant's rules.
 // Every volume it adds carries a name a tenant may not use, and no mount of it
 // is at, under or above a root, where a tenant mount could replace it or hide it.
+// Each grant names a seal key, so the seal key's volume and mount are among them.
 func TestBuildOverlayAvoidsMountRoots(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -479,7 +480,10 @@ func TestBuildOverlayAvoidsMountRoots(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cg := testGrant(func(cg *v1alpha1.CapacityGrant) { setRuntime(cg, tc.runtime) })
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, tc.runtime)
+				cg.Spec.Zygote.SealKeySecretName = "seal"
+			})
 			spec := mustBuild(t, cg, testOptions()).Spec
 			for _, v := range spec.Volumes {
 				if !isOwnedVolume(v.Name) {
