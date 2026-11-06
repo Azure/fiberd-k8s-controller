@@ -81,6 +81,27 @@ func TestBuildHelper(t *testing.T) {
 	}
 }
 
+// TestBuildHelperEnv checks that tenant env stays on the fiberd container,
+// where the helper runs, and that the init container receives none.
+func TestBuildHelperEnv(t *testing.T) {
+	entry := corev1.EnvVar{Name: "FIBERD_TENANT_X", Value: "x"}
+	cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
+		setRuntime(cg, v1alpha1.RuntimeHyperlight)
+		container(cg).Env = []corev1.EnvVar{entry}
+	})
+	spec := mustBuild(t, cg, testOptions()).Spec
+
+	if diff := cmp.Diff(entry, spec.Containers[0].Env[0]); diff != "" {
+		t.Errorf("first fiberd env mismatch (-want +got):\n%s", diff)
+	}
+	if len(spec.InitContainers) != 1 {
+		t.Fatalf("initContainers = %v, want the helper's alone", spec.InitContainers)
+	}
+	if got := spec.InitContainers[0].Env; len(got) != 0 {
+		t.Errorf("init container env = %v, want none", got)
+	}
+}
+
 // TestBuildHelperOnlyHyperlight checks that no other runtime gets the
 // helper's init container, volume, mount or flag.
 func TestBuildHelperOnlyHyperlight(t *testing.T) {

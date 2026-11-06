@@ -3,6 +3,7 @@ package podtemplate
 import (
 	"maps"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -115,6 +116,12 @@ func TestBuildPodSpec(t *testing.T) {
 			wantGates:          []corev1.PodReadinessGate{zygoteGate},
 		},
 		{
+			name:               "a tenant cannot turn service links on",
+			mod:                func(s *corev1.PodSpec) { s.EnableServiceLinks = ptr.To(true) },
+			wantServiceAccount: DefaultServiceAccount,
+			wantGates:          []corev1.PodReadinessGate{zygoteGate},
+		},
+		{
 			name:               "zygote gate is appended to the tenant's",
 			mod:                func(s *corev1.PodSpec) { s.ReadinessGates = []corev1.PodReadinessGate{tenantGate} },
 			wantServiceAccount: DefaultServiceAccount,
@@ -143,6 +150,10 @@ func TestBuildPodSpec(t *testing.T) {
 			}
 			if spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
 				t.Errorf("automountServiceAccountToken = %v, want true", spec.AutomountServiceAccountToken)
+			}
+			// Kubernetes reads an unset field as true.
+			if got := ptr.Deref(spec.EnableServiceLinks, true); got {
+				t.Errorf("enableServiceLinks = %t, want false", got)
 			}
 			if spec.RestartPolicy != corev1.RestartPolicyAlways {
 				t.Errorf("restartPolicy = %q, want Always", spec.RestartPolicy)
@@ -215,11 +226,6 @@ func TestBuildPassThrough(t *testing.T) {
 				s.ResourceClaims = []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimTemplateName: ptr.To("one-gpu")}}
 			},
 			get: func(s *corev1.PodSpec) any { return s.ResourceClaims },
-		},
-		{
-			name: "container workingDir",
-			mod:  func(s *corev1.PodSpec) { s.Containers[0].WorkingDir = "/srv" },
-			get:  func(s *corev1.PodSpec) any { return s.Containers[0].WorkingDir },
 		},
 	}
 	for _, tc := range cases {
@@ -510,6 +516,9 @@ func TestBuildEnv(t *testing.T) {
 		fieldEnv("POD_UID", "metadata.uid"),
 		{Name: "SSL_CERT_FILE", Value: "/var/run/fiberd/tls/ca.crt"},
 	}
+	fromSecret := corev1.EnvVar{Name: "FIBERD_TENANT_TOKEN", ValueFrom: &corev1.EnvVarSource{
+		SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "helper"}, Key: "token"},
+	}}
 	cases := []struct {
 		name string
 		env  []corev1.EnvVar
@@ -518,8 +527,13 @@ func TestBuildEnv(t *testing.T) {
 		{name: "no tenant env", want: overlayEnv},
 		{
 			name: "tenant env comes first",
-			env:  []corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}},
-			want: append([]corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}}, overlayEnv...),
+			env:  []corev1.EnvVar{{Name: "FIBERD_TENANT_LOG_LEVEL", Value: "debug"}},
+			want: append([]corev1.EnvVar{{Name: "FIBERD_TENANT_LOG_LEVEL", Value: "debug"}}, overlayEnv...),
+		},
+		{
+			name: "tenant env may take its value from a Secret",
+			env:  []corev1.EnvVar{fromSecret},
+			want: append([]corev1.EnvVar{fromSecret}, overlayEnv...),
 		},
 	}
 	for _, tc := range cases {
@@ -533,6 +547,51 @@ func TestBuildEnv(t *testing.T) {
 				t.Errorf("image = %q, want %q", got, testImage)
 			}
 		})
+	}
+}
+
+// TestBuildEnvNames runs the name rule on a grant stored before the rule,
+// which reaches the builder without passing the policy. The entry under the
+// root comes first, so the error must name the second.
+func TestBuildEnvNames(t *testing.T) {
+	refused := []string{
+		"",
+		"PATH",
+		"LD_AUDIT",
+		"BASH_ENV",
+		"GRPC_ENFORCE_ALPN_ENABLED",
+		"EXAMPLE_CLIENT_ID",
+		"fiberd_tenant_x",
+		"FIBERD_TENANT_x",
+		"FIBERD_TENANT_",
+		"FIBERD_TENANT_X\nPATH",
+		"FIBERD_TENANT_X\n",
+		"MY_FIBERD_TENANT_X",
+	}
+	for _, name := range refused {
+		t.Run(name, func(t *testing.T) {
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
+				container(cg).Env = []corev1.EnvVar{{Name: "FIBERD_TENANT_X", Value: "x"}, {Name: name, Value: "x"}}
+			})
+			_, err := Build(cg, testImage, testServiceName, testOptions())
+			if err == nil {
+				t.Fatal("Build succeeded, want the name refused")
+			}
+			want := "env[1].name: Forbidden: " + strconv.Quote(name) + " must match " + EnvNamePattern
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Build error = %q, want it to hold %q", err, want)
+			}
+		})
+	}
+}
+
+// TestBuildOverlayEnvOutsideRoot keeps the overlay's names apart from the
+// tenant's, so no tenant name can shadow one.
+func TestBuildOverlayEnvOutsideRoot(t *testing.T) {
+	for _, e := range mustBuild(t, testGrant(), testOptions()).Spec.Containers[0].Env {
+		if envNamePattern.MatchString(e.Name) {
+			t.Errorf("overlay variable %s matches %s", e.Name, EnvNamePattern)
+		}
 	}
 }
 
@@ -577,7 +636,7 @@ func TestBuildErrors(t *testing.T) {
 		c.Command = []string{"/bin/sh"}
 		c.Lifecycle = &corev1.Lifecycle{PreStop: &corev1.LifecycleHandler{Exec: &corev1.ExecAction{Command: []string{"/bin/sh"}}}}
 	})
-	const loaderWhy = "would bend fiberd's TLS or run tenant code inside fiberd"
+	const envWhy = "must match " + EnvNamePattern
 	const sourceWhy = "Forbidden: must be an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume"
 	tenantProbe := &corev1.Probe{
 		ProbeHandler:  corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromInt32(9090)}},
@@ -667,6 +726,11 @@ func TestBuildErrors(t *testing.T) {
 			name:    "command set",
 			mod:     ctrMod(func(c *corev1.Container) { c.Command = []string{"/bin/sh"} }),
 			wantErr: "spec.podTemplate.spec.containers[0].command",
+		},
+		{
+			name:    "workingDir set",
+			mod:     ctrMod(func(c *corev1.Container) { c.WorkingDir = "/srv" }),
+			wantErr: "spec.podTemplate.spec.containers[0].workingDir: Forbidden",
 		},
 		{
 			name: "lifecycle hook set",
@@ -882,17 +946,17 @@ func TestBuildErrors(t *testing.T) {
 		{
 			name:    "env SSL_CERT_FILE",
 			mod:     ctrMod(func(c *corev1.Container) { c.Env = []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "/ca/ca.pem"}} }),
-			wantErr: "env[0].name: Forbidden: SSL_CERT_FILE would change which issuer fiberd trusts",
+			wantErr: `env[0].name: Forbidden: "SSL_CERT_FILE" ` + envWhy,
 		},
 		{
 			name:    "env LD_PRELOAD",
 			mod:     ctrMod(func(c *corev1.Container) { c.Env = []corev1.EnvVar{{Name: "LD_PRELOAD", Value: "/x.so"}} }),
-			wantErr: "env[0].name: Forbidden: LD_PRELOAD " + loaderWhy,
+			wantErr: `env[0].name: Forbidden: "LD_PRELOAD" ` + envWhy,
 		},
 		{
 			name:    "env GODEBUG",
 			mod:     ctrMod(func(c *corev1.Container) { c.Env = []corev1.EnvVar{{Name: "GODEBUG", Value: "x"}} }),
-			wantErr: "env[0].name: Forbidden: GODEBUG " + loaderWhy,
+			wantErr: `env[0].name: Forbidden: "GODEBUG" ` + envWhy,
 		},
 		{
 			name: "reserved label under fiberd.io",

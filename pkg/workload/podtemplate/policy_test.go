@@ -58,12 +58,6 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 			want:     reservedKeyPrefixes,
 			anyOrder: true,
 		},
-		{
-			name:     "ownedEnv holds identityEnv, trustEnv and loaderEnv",
-			variable: "ownedEnv",
-			want:     slices.Concat(identityEnv, trustEnv, loaderEnv),
-			anyOrder: true,
-		},
 	}
 	for _, tc := range lists {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,6 +95,27 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("envNamePattern equals EnvNamePattern", func(t *testing.T) {
+		i := slices.IndexFunc(vap.Spec.Variables, func(v admissionregistrationv1.Variable) bool { return v.Name == "envNamePattern" })
+		if i < 0 {
+			t.Fatalf("%s has no variable envNamePattern", grantsPolicyFile)
+		}
+		if got, want := vap.Spec.Variables[i].Expression, "'"+EnvNamePattern+"'"; got != want {
+			t.Errorf("variable envNamePattern = %s, want %s", got, want)
+		}
+	})
+	t.Run("the env rule's message holds EnvNamePattern", func(t *testing.T) {
+		i := slices.IndexFunc(vap.Spec.Validations, func(v admissionregistrationv1.Validation) bool {
+			return strings.Contains(v.Expression, "variables.outsideEnv")
+		})
+		if i < 0 {
+			t.Fatalf("%s has no validation of variables.outsideEnv", grantsPolicyFile)
+		}
+		if msg := vap.Spec.Validations[i].Message; !strings.Contains(msg, EnvNamePattern) {
+			t.Errorf("%q does not hold %s", msg, EnvNamePattern)
+		}
+	})
 }
 
 // celStringList parses a CEL list literal of single-quoted strings, the

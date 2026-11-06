@@ -137,6 +137,7 @@ var podTemplateRules = []string{
 	"has(self.spec)",
 	"!has(self.spec) || (self.spec.containers.size() == 1 && self.spec.containers[0].name == 'fiberd')",
 	"!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].command)",
+	"!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].workingDir)",
 	"!has(self.spec) || (!has(self.spec.initContainers) && !has(self.spec.ephemeralContainers))",
 	"!has(self.spec) || (!has(self.spec.serviceAccountName) && !has(self.spec.serviceAccount))",
 	"!has(self.spec) || !has(self.spec.nodeName)",
