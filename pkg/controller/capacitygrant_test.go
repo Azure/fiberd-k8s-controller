@@ -373,6 +373,20 @@ func TestReconcile(t *testing.T) {
 			wantMessage: "spec.fibers.max",
 		},
 		{
+			name:         "a helper image on runtime proc is InvalidSpec",
+			grant:        testGrant(func(cg *v1alpha1.CapacityGrant) { cg.Spec.HelperImage = "ghcr.io/azure/fiberd-helper:v0.4.0" }),
+			wantObserves: 1,
+			wantPatches:  1,
+			wantStatus: &v1alpha1.CapacityGrantStatus{
+				ObservedGeneration: 3,
+				Conditions: []metav1.Condition{
+					cond(v1alpha1.ConditionReady, metav1.ConditionFalse, v1alpha1.ReasonInvalidSpec, "", later),
+					cond(v1alpha1.ConditionProgressing, metav1.ConditionUnknown, v1alpha1.ReasonInvalidSpec, "", later),
+				},
+			},
+			wantMessage: "spec.helperImage: Forbidden",
+		},
+		{
 			name: "an arg the controller owns is InvalidSpec",
 			grant: testGrant(func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.PodTemplate.Spec.Containers[0].Args = []string{"-issuer=https://elsewhere.example"}

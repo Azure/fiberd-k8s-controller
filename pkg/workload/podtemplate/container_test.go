@@ -76,9 +76,9 @@ func TestBuildArgs(t *testing.T) {
 			want: append(withArg(wantProcArgs(), "-runtime=", "-runtime=gvisor"), "-gvisor-rootfs=/usr/share/fiberd/rootfs"),
 		},
 		{
-			name: "hyperlight adds no rootfs",
-			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeHyperlight }},
-			want: withArg(wantProcArgs(), "-runtime=", "-runtime=hyperlight"),
+			name: "hyperlight adds its helper",
+			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { setRuntime(cg, v1alpha1.RuntimeHyperlight) }},
+			want: append(withArg(wantProcArgs(), "-runtime=", "-runtime=hyperlight"), "-hyperlight-helper=/var/run/fiberd/helper/helper"),
 		},
 		{
 			name: "plaintext comes last",
@@ -185,6 +185,8 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 		wantRuntime   string
 		wantRunc      string
 		wantGvisor    string
+		wantHelper    string
+		wantGuest     string
 		wantTemplate  string
 		wantRegistry  string
 		wantPlaintext bool
@@ -213,11 +215,14 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 			wantTemplate: "/app/zygote",
 		},
 		{
-			name:          "hyperlight with plaintext",
+			name:          "hyperlight with its guest and plaintext",
 			runtime:       v1alpha1.RuntimeHyperlight,
 			command:       []string{"/app/zygote"},
+			tenantArgs:    []string{"-hyperlight-guest=/var/run/fiberd/helper/guest"},
 			plaintext:     true,
 			wantRuntime:   "hyperlight",
+			wantHelper:    "/var/run/fiberd/helper/helper",
+			wantGuest:     "/var/run/fiberd/helper/guest",
 			wantTemplate:  "/app/zygote",
 			wantPlaintext: true,
 		},
@@ -234,7 +239,7 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
-				cg.Spec.Runtime = tc.runtime
+				setRuntime(cg, tc.runtime)
 				cg.Spec.Zygote.Command = tc.command
 				container(cg).Args = tc.tenantArgs
 			})
@@ -280,6 +285,8 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 				{"template", cfg.Runtime.Templates[testDigest], tc.wantTemplate},
 				{"runc-rootfs", cfg.Runtime.Runc.Rootfs, tc.wantRunc},
 				{"gvisor-rootfs", cfg.Runtime.Gvisor.Rootfs, tc.wantGvisor},
+				{"hyperlight-helper", cfg.Runtime.Hyperlight.Helper, tc.wantHelper},
+				{"hyperlight-guest", cfg.Runtime.Hyperlight.Guest, tc.wantGuest},
 				{"registry", cfg.Registry.Templates, tc.wantRegistry},
 				{"insecure-plaintext", cfg.API.TLS.InsecurePlaintext, tc.wantPlaintext},
 			}
@@ -332,7 +339,7 @@ func TestBuildProbes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cg := testGrant(func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = tc.runtime })
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) { setRuntime(cg, tc.runtime) })
 			c := mustBuild(t, cg, testOptions()).Spec.Containers[0]
 			for _, p := range []struct {
 				what      string

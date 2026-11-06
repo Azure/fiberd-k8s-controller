@@ -191,6 +191,17 @@ func setRuntime(runtime string) mutation {
 	}
 }
 
+// setHelperImage asks for runtime hyperlight with image as its helper, so
+// the CRD rules on helperImage pass and only the policy decides.
+func setHelperImage(image string) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		setRuntime("hyperlight")(t, u)
+		if err := unstructured.SetNestedField(u.Object, image, "spec", "helperImage"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func setPrivileged(t *testing.T, u *unstructured.Unstructured) {
 	testutil.SetContainerField(t, u, "securityContext", map[string]any{"privileged": true})
 }
@@ -383,6 +394,12 @@ func TestPolicyRefusals(t *testing.T) {
 			substr: "volume fiberd-grant-token is mounted by the controller",
 		},
 		{
+			name:   "refuses a volume named like the controller's helper volume",
+			mutate: setVolume(map[string]any{"name": "fiberd-helper", "emptyDir": map[string]any{}}),
+			reason: metav1.StatusReasonForbidden,
+			substr: "volume fiberd-helper is mounted by the controller",
+		},
+		{
 			// No volume of that name, since the volumes list is checked first
 			// and would then decide instead of the mount.
 			name: "refuses a mount naming the controller's grants volume",
@@ -552,6 +569,87 @@ func TestPolicyPrivilegedNamespace(t *testing.T) {
 	}
 }
 
+// TestPolicyHelperImage lets one namespace run hyperlight and lists a
+// helper repository in helperImages, so only the image rules can refuse a
+// grant there.
+func TestPolicyHelperImage(t *testing.T) {
+	const (
+		helperRepo = "ghcr.io/azure/fiberd-helper"
+		// fiberdRepo is listed in the shipped images.
+		fiberdRepo = "ghcr.io/azure/fiberd"
+	)
+	helperListMessage := imageListMessage + " in GrantPolicy default spec.helperImages"
+	ns := namespace(t)
+	listed := readSample(t, ns)
+	setHelperImage(helperRepo+"@"+testDigest)(t, listed)
+
+	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
+		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, ns)
+		s.Runtimes = append(s.Runtimes, v1alpha1.RuntimeHyperlight)
+		s.HelperImages = []string{helperRepo}
+	}, refused(listed, metav1.StatusReasonForbidden, "helper image "+helperRepo+"@"+testDigest+" "+helperListMessage))
+	testutil.Eventually(t, "a hyperlight grant to be admitted in "+ns, accepted(listed))
+
+	cases := []struct {
+		name   string
+		mutate mutation
+		reason metav1.StatusReason
+		substr string
+	}{
+		{
+			name:   "refuses a helper image without a digest",
+			mutate: setHelperImage(helperRepo + ":0.4.0"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "spec.helperImage must carry a digest",
+		},
+		{
+			name:   "refuses a helper image from an unlisted repository",
+			mutate: setHelperImage("registry.example/helper@" + testDigest),
+			reason: metav1.StatusReasonForbidden,
+			substr: "helper image registry.example/helper@" + testDigest + " " + helperListMessage,
+		},
+		{
+			name:   "refuses a helper image whose repository only starts with a listed one",
+			mutate: setHelperImage(helperRepo + "-evil@" + testDigest),
+			reason: metav1.StatusReasonForbidden,
+			substr: "helper image " + helperRepo + "-evil@" + testDigest + " " + helperListMessage,
+		},
+		{
+			name:   "refuses a helper image whose repository is listed only in images",
+			mutate: setHelperImage(fiberdRepo + "@" + testDigest),
+			reason: metav1.StatusReasonForbidden,
+			substr: "helper image " + fiberdRepo + "@" + testDigest + " " + helperListMessage,
+		},
+		{
+			name: "refuses a fiberd image whose repository is listed only in helperImages",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setHelperImage(helperRepo+"@"+testDigest)(t, u)
+				setImage(helperRepo+"@"+testDigest)(t, u)
+			},
+			reason: metav1.StatusReasonForbidden,
+			substr: "image " + helperRepo + "@" + testDigest + " " + imageListMessage + " in GrantPolicy default spec.images",
+		},
+		{
+			name:   "admits a listed helper image with a tag and a digest",
+			mutate: setHelperImage(helperRepo + ":0.4.0@" + testDigest),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u := readSample(t, ns)
+			tc.mutate(t, u)
+			err := dryRunCreate(t.Context(), u)
+			if tc.reason == "" {
+				if err != nil {
+					t.Fatalf("create: %v, want it admitted", err)
+				}
+				return
+			}
+			expectDenied(t, err, tc.reason, tc.substr)
+		})
+	}
+}
+
 // TestPolicyUnchangedSpecUpdate tightens GrantPolicy default under a stored
 // grant. A metadata-only update must still pass, since the controller
 // removes its finalizer that way, and a spec change must not.
@@ -660,6 +758,18 @@ func TestGrantPolicySchema(t *testing.T) {
 			mutate:  setGrantPolicyList("images", "ghcr.io/azure/fiberd:0.4.0"),
 			stored:  true,
 			substrs: []string{"spec.images", "should match"},
+		},
+		{
+			name:    "refuses an empty helperImages list",
+			mutate:  setGrantPolicyList("helperImages"),
+			stored:  true,
+			substrs: []string{"spec.helperImages", "should have at least 1 items"},
+		},
+		{
+			name:    "refuses a helperImages entry with a tag",
+			mutate:  setGrantPolicyList("helperImages", "ghcr.io/azure/fiberd-helper:0.4.0"),
+			stored:  true,
+			substrs: []string{"spec.helperImages", "should match"},
 		},
 		{
 			name:    "refuses an empty runtimes list",

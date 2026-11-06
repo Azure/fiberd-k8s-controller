@@ -42,12 +42,28 @@ spec:
           spec:
             description: spec is the desired policy.
             properties:
+              helperImages:
+                description: |-
+                  helperImages lists the repositories the helperImage of a hyperlight grant may come
+                  from, matched as images entries are, and a helperImage must also carry a digest. It is
+                  a list of its own because the helper runs under fiberd with far less than the fiberd
+                  container holds, so a repository trusted for helpers does not qualify as a fiberd
+                  image. While it is unset no hyperlight grant is admitted.
+                items:
+                  maxLength: 255
+                  pattern: ^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$
+                  type: string
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
               images:
                 description: |-
-                  images lists the repositories a grant Pod image may come from, each fully qualified
-                  such as ghcr.io/azure/fiberd. An entry matches an image that equals it or continues
-                  with /, : or @, so ghcr.io/azure/fiberd matches ghcr.io/azure/fiberd:0.4.0@sha256:...
-                  and not ghcr.io/azure/fiberd-runc. Every image must also carry a digest.
+                  images lists the repositories the fiberd container image may come from, each fully
+                  qualified such as ghcr.io/azure/fiberd. An entry matches an image that equals it or
+                  continues with /, : or @, so ghcr.io/azure/fiberd matches
+                  ghcr.io/azure/fiberd:0.4.0@sha256:... and not ghcr.io/azure/fiberd-runc. Every image
+                  must also carry a digest. A helperImage is not checked against this list.
                 items:
                   maxLength: 255
                   pattern: ^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$

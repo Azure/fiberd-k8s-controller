@@ -146,6 +146,12 @@ var podTemplateRules = []string{
 	"!has(self.spec) || ((!has(self.spec.securityContext) || (!has(self.spec.securityContext.seLinuxOptions) && !has(self.spec.securityContext.windowsOptions))) && (self.spec.containers.size() == 0 || !has(self.spec.containers[0].securityContext) || (!has(self.spec.containers[0].securityContext.seLinuxOptions) && !has(self.spec.containers[0].securityContext.windowsOptions))))",
 }
 
+// helperImageRules are the CEL rules on spec, in marker order.
+var helperImageRules = []string{
+	"!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",
+	"!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",
+}
+
 // warmRule is the CEL rule on spec.fibers.
 const warmRule = "!has(self.warm) || self.warm <= self.max"
 
@@ -171,6 +177,17 @@ func TestCapacityGrantSchema(t *testing.T) {
 			name:     "spec requires zygote fibers and podTemplate",
 			path:     "spec",
 			required: []string{"zygote", "fibers", "podTemplate"},
+		},
+		{
+			name:               "spec carries the helperImage rules",
+			path:               "spec",
+			rules:              helperImageRules,
+			rulesNeedFieldPath: true,
+		},
+		{
+			name:      "helperImage fits the longest image reference",
+			path:      "spec.helperImage",
+			maxLength: ptr(int64(456)),
 		},
 		{
 			name:     "zygote requires digest and command",
@@ -294,6 +311,23 @@ func TestGrantPolicySchema(t *testing.T) {
 		{
 			name:      "images items are repositories",
 			path:      "spec.images.[]",
+			pattern:   v1alpha1.ImageRepositoryPattern,
+			maxLength: ptr(int64(255)),
+		},
+		{
+			name:     "helperImages is a set",
+			path:     "spec.helperImages",
+			listType: "set",
+		},
+		{
+			name:     "helperImages has between one and 64 items",
+			path:     "spec.helperImages",
+			minItems: ptr(int64(1)),
+			maxItems: ptr(int64(64)),
+		},
+		{
+			name:      "helperImages items are repositories",
+			path:      "spec.helperImages.[]",
 			pattern:   v1alpha1.ImageRepositoryPattern,
 			maxLength: ptr(int64(255)),
 		},

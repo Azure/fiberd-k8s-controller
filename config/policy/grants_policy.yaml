@@ -37,6 +37,9 @@ spec:
       expression: "has(variables.container.args) ? variables.container.args : []"
     - name: image
       expression: "has(variables.container.image) ? variables.container.image : ''"
+    # The CRD allows helperImage only for runtime hyperlight, which needs it.
+    - name: helperImage
+      expression: "has(object.spec.helperImage) ? object.spec.helperImage : ''"
     # The fiberd flags a tenant may set, sorted. Every other flag is the
     # controller's or the operator's. A test keeps the list equal to
     # podtemplate.TenantFlags(), which says why each is the tenant's.
@@ -93,7 +96,7 @@ spec:
     # A mount naming an overlay volume would expose fiberd's keys, grants,
     # certificate or token at a path fibers can see.
     - name: ownedVolumes
-      expression: "['fiberd-state', 'fiberd-grants', 'fiberd-tls', 'fiberd-grant-token']"
+      expression: "['fiberd-state', 'fiberd-grants', 'fiberd-tls', 'fiberd-grant-token', 'fiberd-helper']"
     - name: volumeNames
       expression: |-
         variables.volumes.map(v, v.name)
@@ -144,6 +147,17 @@ spec:
       messageExpression: "'image ' + variables.image + ' is not under a repository listed in GrantPolicy default spec.images'"
       message: "the fiberd container image is not under a repository listed in GrantPolicy default spec.images"
       reason: Forbidden
+    # The helper runs inside the fiberd container, so its image carries a
+    # digest as fiberd's does. It is checked only against helperImages: the
+    # helper runs under fiberd with far less than the fiberd container holds,
+    # so a repository trusted for helpers does not qualify as a fiberd image.
+    - expression: "variables.helperImage == '' || variables.helperImage.matches('@sha256:[a-f0-9]{64}$')"
+      message: "spec.helperImage must carry a digest, such as ghcr.io/azure/fiberd-helper:0.4.0@sha256:..."
+      reason: Invalid
+    - expression: "variables.helperImage == '' || (has(params.spec.helperImages) && params.spec.helperImages.exists(p, variables.helperImage == p || variables.helperImage.startsWith(p + '/') || variables.helperImage.startsWith(p + ':') || variables.helperImage.startsWith(p + '@')))"
+      messageExpression: "'helper image ' + variables.helperImage + ' is not under a repository listed in GrantPolicy default spec.helperImages'"
+      message: "spec.helperImage is not under a repository listed in GrantPolicy default spec.helperImages"
+      reason: Forbidden
     - expression: "!variables.envNames.exists(n, n in variables.ownedEnv)"
       messageExpression: "'env ' + variables.envNames.filter(n, n in variables.ownedEnv)[0] + ' is not a variable a tenant may set'"
       message: "a podTemplate env variable is not one a tenant may set"
@@ -165,7 +179,7 @@ spec:
       reason: Forbidden
     - expression: "!variables.volumeNames.exists(n, n in variables.ownedVolumes)"
       messageExpression: "'volume ' + variables.volumeNames.filter(n, n in variables.ownedVolumes)[0] + ' is mounted by the controller'"
-      message: "the volumes fiberd-state, fiberd-grants, fiberd-tls and fiberd-grant-token are mounted by the controller"
+      message: "the volumes fiberd-state, fiberd-grants, fiberd-tls, fiberd-grant-token and fiberd-helper are mounted by the controller"
       reason: Forbidden
     # Unclean or relative paths would slip past the owned directory check.
     - expression: "!variables.mountPaths.exists(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..'))"

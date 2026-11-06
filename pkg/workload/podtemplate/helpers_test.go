@@ -20,6 +20,9 @@ const (
 
 	// testServiceName is workload.ObjectName(testGrant()). This package cannot import pkg/workload, which imports it.
 	testServiceName = "fiberd-web"
+
+	// testHelperImage is the helper image of a hyperlight grant.
+	testHelperImage = "ghcr.io/azure/fiberd-helper:v0.4.0"
 )
 
 var testDigest = "sha256:" + strings.Repeat("ab", 32)
@@ -52,6 +55,15 @@ func testGrant(mods ...func(*v1alpha1.CapacityGrant)) *v1alpha1.CapacityGrant {
 		mod(cg)
 	}
 	return cg
+}
+
+// setRuntime sets the grant's runtime, with the helper image that runtime
+// hyperlight needs.
+func setRuntime(cg *v1alpha1.CapacityGrant, rt v1alpha1.Runtime) {
+	cg.Spec.Runtime = rt
+	if rt == v1alpha1.RuntimeHyperlight {
+		cg.Spec.HelperImage = testHelperImage
+	}
 }
 
 // container returns the grant template's fiberd container, for a mod.

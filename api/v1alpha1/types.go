@@ -25,6 +25,9 @@ const (
 )
 
 // CapacityGrantSpec describes the capacity a tenant asks for and the Pod that holds it.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",message="helperImage is allowed only for runtime hyperlight",fieldPath=".helperImage",reason="FieldValueForbidden"
+// +kubebuilder:validation:XValidation:rule="!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",message="runtime hyperlight needs helperImage, fiberd does not start without its helper",fieldPath=".helperImage",reason="FieldValueRequired"
 type CapacityGrantSpec struct {
 	// zygote is the program every fiber of the grant is cloned from.
 	// +required
@@ -49,6 +52,24 @@ type CapacityGrantSpec struct {
 	// +optional
 	// +kubebuilder:default="proc"
 	Runtime Runtime `json:"runtime,omitempty"`
+
+	// helperImage is the image the Hyperlight helper comes from. Runtime hyperlight needs it,
+	// and no other runtime accepts it. The image holds an executable /fiberd-helper/helper,
+	// and optionally /fiberd-helper/guest. An init container copies /fiberd-helper into the
+	// Pod, and fiberd runs the helper from /var/run/fiberd/helper/helper in the fiberd
+	// container, not on the image's base. The init container runs the image itself, so cp
+	// must be on the image's PATH, and everything under /fiberd-helper must be readable by
+	// other users, since the copy runs as uid 65532.
+	// The helper must be static, or linked against glibc 2.36 or older with only libc, libm
+	// and libgcc_s. It must answer helper --version and speak the protocol in fiberd's
+	// hack/hyperlight/PROTOCOL.md. A guest is passed as -hyperlight-guest in the fiberd
+	// container's args, such as -hyperlight-guest=/var/run/fiberd/helper/guest. It is at
+	// most 456 characters, the longest reference a registry accepts: a 255-character
+	// repository, a 128-character tag and a sha256 digest.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=456
+	HelperImage string `json:"helperImage,omitempty"`
 
 	// podTemplate is the template of the grant Pod, written as in a Deployment.
 	// It holds exactly one container named fiberd.

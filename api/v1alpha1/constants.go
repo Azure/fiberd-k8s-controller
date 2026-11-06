@@ -19,12 +19,12 @@ const (
 	// test checks it.
 	DigestPattern = "^sha256:[a-f0-9]{64}$"
 
-	// ImageRepositoryPattern is the form of a GrantPolicy images entry, a fully qualified
-	// repository with no tag or digest. The host is localhost, a name with a dot, or a name
-	// with a port, so a bare name such as library/fiberd never passes for a host, and at
-	// least one path component follows, so an entry can never admit a whole registry. The
-	// path grammar is the OCI distribution reference's. The CRD marker on spec.images holds
-	// the same pattern, and a test checks it.
+	// ImageRepositoryPattern is the form of a GrantPolicy images or helperImages entry, a fully
+	// qualified repository with no tag or digest. The host is localhost, a name with a dot, or a
+	// name with a port, so a bare name such as library/fiberd never passes for a host, and at
+	// least one path component follows, so an entry can never admit a whole registry. The path
+	// grammar is the OCI distribution reference's. The CRD markers on spec.images and
+	// spec.helperImages hold the same pattern, and a test checks it.
 	ImageRepositoryPattern = `^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 
 	// ConditionProgressing reports whether the grant Pods are being rolled out.

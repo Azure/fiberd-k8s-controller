@@ -70,6 +70,7 @@ func TestManager(t *testing.T) {
 		{name: "the JWKS serves exactly the keys of the key Secret the controller created", run: testKeySet},
 		{name: "a new grant gets a Service and a Deployment it controls, written only by server-side apply", run: testCreated},
 		{name: "a spec change is applied by server-side apply and changes the grant hash", run: testSpecChange},
+		{name: "a hyperlight grant gets a Deployment whose init container installs the helper", run: testHyperlight},
 		{name: "a restartedAt annotation from another field manager survives an apply", run: testRestartedAt},
 		{name: "a deleted Service is created again", run: testServiceReturns},
 		{name: "a foreign Deployment of the same name is left alone and the grant reports DeploymentConflict", run: testForeignDeployment},
@@ -188,6 +189,25 @@ func testSpecChange(t *testing.T) {
 		t.Errorf("Deployment generation = %d after a spec change, want at least 2", dep.Generation)
 	}
 	checkAppliedOnly(t, dep)
+}
+
+// testHyperlight proves the API server accepts the Deployment of a
+// hyperlight grant, init container and all.
+func testHyperlight(t *testing.T) {
+	const helperImage = "ghcr.io/azure/fiberd-helper:v0.4.0"
+	ns := tenantNamespace(t, true)
+	cg := newGrant(ns, "hyperlight")
+	cg.Spec.Runtime = v1alpha1.RuntimeHyperlight
+	cg.Spec.HelperImage = helperImage
+	if err := admin.Create(t.Context(), cg); err != nil {
+		t.Fatalf("create CapacityGrant %s/%s: %v", ns, cg.Name, err)
+	}
+	dep, _ := waitForObjects(t, cg)
+	inits := dep.Spec.Template.Spec.InitContainers
+	if len(inits) != 1 || inits[0].Image != helperImage {
+		t.Fatalf("Deployment %s initContainers = %v, want one running %s", dep.Name, inits, helperImage)
+	}
+	waitForCondition(t, cg, v1alpha1.ConditionReady, metav1.ConditionFalse, v1alpha1.ReasonUnavailable)
 }
 
 func testRestartedAt(t *testing.T) {

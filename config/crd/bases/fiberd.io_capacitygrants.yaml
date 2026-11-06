@@ -76,6 +76,24 @@ spec:
                 x-kubernetes-validations:
                 - message: fibers.warm must not exceed fibers.max
                   rule: '!has(self.warm) || self.warm <= self.max'
+              helperImage:
+                description: |-
+                  helperImage is the image the Hyperlight helper comes from. Runtime hyperlight needs it,
+                  and no other runtime accepts it. The image holds an executable /fiberd-helper/helper,
+                  and optionally /fiberd-helper/guest. An init container copies /fiberd-helper into the
+                  Pod, and fiberd runs the helper from /var/run/fiberd/helper/helper in the fiberd
+                  container, not on the image's base. The init container runs the image itself, so cp
+                  must be on the image's PATH, and everything under /fiberd-helper must be readable by
+                  other users, since the copy runs as uid 65532.
+                  The helper must be static, or linked against glibc 2.36 or older with only libc, libm
+                  and libgcc_s. It must answer helper --version and speak the protocol in fiberd's
+                  hack/hyperlight/PROTOCOL.md. A guest is passed as -hyperlight-guest in the fiberd
+                  container's args, such as -hyperlight-guest=/var/run/fiberd/helper/guest. It is at
+                  most 456 characters, the longest reference a registry accepts: a 255-character
+                  repository, a 128-character tag and a sha256 digest.
+                maxLength: 456
+                minLength: 1
+                type: string
               podTemplate:
                 description: |-
                   podTemplate is the template of the grant Pod, written as in a Deployment.
@@ -9057,6 +9075,17 @@ spec:
             - podTemplate
             - zygote
             type: object
+            x-kubernetes-validations:
+            - fieldPath: .helperImage
+              message: helperImage is allowed only for runtime hyperlight
+              reason: FieldValueForbidden
+              rule: '!has(self.helperImage) || (has(self.runtime) && self.runtime
+                == ''hyperlight'')'
+            - fieldPath: .helperImage
+              message: runtime hyperlight needs helperImage, fiberd does not start
+                without its helper
+              reason: FieldValueRequired
+              rule: '!has(self.runtime) || self.runtime != ''hyperlight'' || has(self.helperImage)'
           status:
             description: status is the observed state of the grant.
             properties:
