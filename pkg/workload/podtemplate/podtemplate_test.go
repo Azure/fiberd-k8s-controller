@@ -688,6 +688,16 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.helperImage: Forbidden: allowed only for runtime hyperlight",
 		},
 		{
+			// The snapshot a hyperlight registry zygote pulls is sealed. The
+			// same grant with a seal key builds in TestBuildArgs.
+			name: "a hyperlight registry zygote without a seal key",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, v1alpha1.RuntimeHyperlight)
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes"}
+			},
+			wantErr: "spec.zygote.sealKeySecretName: Required value",
+		},
+		{
 			name:    "bad digest",
 			mod:     func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.Digest = "sha256:ABC" },
 			wantErr: "spec.zygote: Invalid value",
@@ -713,14 +723,6 @@ func TestBuildErrors(t *testing.T) {
 				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z:latest"}
 			},
 			wantErr: "spec.zygote.registry: Invalid value",
-		},
-		{
-			name: "zygote registry on runtime hyperlight",
-			mod: func(cg *v1alpha1.CapacityGrant) {
-				setRuntime(cg, v1alpha1.RuntimeHyperlight)
-				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z"}
-			},
-			wantErr: "spec.zygote.registry: Forbidden",
 		},
 		{
 			name: "zygote registry stored with an https scheme",

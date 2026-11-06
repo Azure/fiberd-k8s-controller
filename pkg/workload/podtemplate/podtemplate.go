@@ -198,7 +198,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	rt, errs := checkRuntime(specPath.Child("runtime"), cg.Spec.Runtime)
 	if len(errs) == 0 {
 		errs = append(errs, checkHelperImage(specPath.Child("helperImage"), rt, cg.Spec.HelperImage)...)
-		errs = append(errs, checkRegistryRuntime(specPath.Child("zygote", "registry"), rt, cg.Spec.Zygote.Registry)...)
+		errs = append(errs, checkSealKey(specPath.Child("zygote", "sealKeySecretName"), rt, cg.Spec.Zygote)...)
 	}
 	zArgs, zErrs := zygoteArgs(specPath.Child("zygote"), cg.Spec.Zygote)
 	errs = append(errs, zErrs...)

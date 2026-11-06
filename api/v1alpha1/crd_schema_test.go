@@ -156,7 +156,7 @@ var podTemplateRules = []string{
 var specRules = []string{
 	"!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",
 	"!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",
-	"!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight'",
+	"!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight' || has(self.zygote.sealKeySecretName)",
 }
 
 // warmRule is the CEL rule on spec.fibers.

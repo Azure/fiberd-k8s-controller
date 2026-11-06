@@ -248,13 +248,21 @@ func TestCRDValidation(t *testing.T) {
 			},
 		},
 		{
-			name: "a registry zygote on runtime hyperlight",
+			name: "a registry zygote with a seal key on runtime hyperlight is accepted",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "hyperlight")
+				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
+				setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes", "sealKeySecretName": "team-a-seal"})(t, u)
+			},
+		},
+		{
+			name: "a registry zygote without a seal key on runtime hyperlight",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
 				setSpecField(t, u, "runtime", "hyperlight")
 				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
 				setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes"})(t, u)
 			},
-			wantErr: "zygote.registry is not allowed for runtime hyperlight",
+			wantErr: "spec.zygote.sealKeySecretName: Required value: runtime hyperlight with zygote.registry needs zygote.sealKeySecretName",
 		},
 		{
 			name:    "a zygote with a command and a registry",

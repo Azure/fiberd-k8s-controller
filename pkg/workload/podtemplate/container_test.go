@@ -126,6 +126,19 @@ func TestBuildArgs(t *testing.T) {
 				"-fiber-hide=/var/run/secrets/fiberd.io/seal-key"),
 		},
 		{
+			name: "a hyperlight registry zygote pulls beside the helper",
+			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, v1alpha1.RuntimeHyperlight)
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes", SealKeySecretName: "team-a-seal"}
+			}},
+			want: append(withArg(withArg(wantProcArgs(),
+				"-runtime=", "-runtime=hyperlight"),
+				"-template=", "-registry=ghcr.io/team-a/zygotes"),
+				"-delta-seal-key=/var/run/secrets/fiberd.io/seal-key/seal-key.json",
+				"-fiber-hide=/var/run/secrets/fiberd.io/seal-key",
+				"-hyperlight-helper=/var/run/fiberd/helper/helper"),
+		},
+		{
 			name: "dollar signs from the grant and options are escaped",
 			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.Zygote.Command = []string{"/app/zygote", "$(HOME)"}

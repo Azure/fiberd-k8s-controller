@@ -155,6 +155,7 @@ func TestControllerArgsAreNotTenantFlags(t *testing.T) {
 		{name: "gvisor", runtime: v1alpha1.RuntimeGvisor},
 		{name: "hyperlight", runtime: v1alpha1.RuntimeHyperlight},
 		{name: "registry zygote with a seal key", runtime: v1alpha1.RuntimeProc, zygote: []string{"-registry=r", "-delta-seal-key=/k", "-fiber-hide=/d"}},
+		{name: "hyperlight registry zygote with a seal key", runtime: v1alpha1.RuntimeHyperlight, zygote: []string{"-registry=r", "-delta-seal-key=/k", "-fiber-hide=/d"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

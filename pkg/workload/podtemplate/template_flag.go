@@ -20,6 +20,16 @@ const (
 
 var registryPattern = regexp.MustCompile(v1alpha1.RegistryPattern)
 
+// checkSealKey refuses a hyperlight grant that pulls its zygote and names no
+// seal key, as the CRD rule does. The artifact holds a sealed Hyperlight
+// snapshot, which the helper restores only with the tenant's key.
+func checkSealKey(fld *field.Path, rt v1alpha1.Runtime, z v1alpha1.ZygoteSpec) field.ErrorList {
+	if rt == v1alpha1.RuntimeHyperlight && z.Registry != "" && z.SealKeySecretName == "" {
+		return field.ErrorList{field.Required(fld, "runtime hyperlight with zygote.registry needs zygote.sealKeySecretName, the pulled snapshot is sealed")}
+	}
+	return nil
+}
+
 // TemplateFlag renders fiberd's -template value from the zygote spec with
 // host.FormatTemplateFlag, so fiberd's own rules decide what a digest and
 // a command may hold. A refusal is reported as a field error on
@@ -39,16 +49,6 @@ func templateFlag(fld *field.Path, z v1alpha1.ZygoteSpec) (string, field.ErrorLi
 		return "", field.ErrorList{field.Invalid(fld, z, err.Error())}
 	}
 	return v, nil
-}
-
-// checkRegistryRuntime refuses a registry zygote on hyperlight, as the CRD
-// rule does. That backend hands its helper only the template's arguments, so
-// the pulled executable would never run.
-func checkRegistryRuntime(fld *field.Path, rt v1alpha1.Runtime, registry string) field.ErrorList {
-	if registry != "" && rt == v1alpha1.RuntimeHyperlight {
-		return field.ErrorList{field.Forbidden(fld, "not allowed for runtime hyperlight, which does not run a pulled zygote yet")}
-	}
-	return nil
 }
 
 // zygoteArgs are the fiberd flags that say where the zygote comes from. A

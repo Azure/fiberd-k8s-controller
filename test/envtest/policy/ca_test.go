@@ -494,17 +494,31 @@ func TestCAPods(t *testing.T) {
 // on every runtime, so fiberd-ca-pods admits what the controller asks for.
 func TestCABuiltPods(t *testing.T) {
 	ns := namespace(t)
-	for _, rt := range []v1alpha1.Runtime{v1alpha1.RuntimeProc, v1alpha1.RuntimeRunc, v1alpha1.RuntimeGvisor, v1alpha1.RuntimeHyperlight} {
-		t.Run(string(rt), func(t *testing.T) {
+	hyperlight := func(cg *v1alpha1.CapacityGrant) {
+		cg.Spec.Runtime = v1alpha1.RuntimeHyperlight
+		cg.Spec.HelperImage = "ghcr.io/azure/fiberd-helper:0.4.0@" + testDigest
+	}
+	tests := []struct {
+		name string
+		edit func(*v1alpha1.CapacityGrant)
+	}{
+		{name: "proc", edit: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeProc }},
+		{name: "runc", edit: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc }},
+		{name: "gvisor", edit: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeGvisor }},
+		{name: "hyperlight", edit: hyperlight},
+		{name: "hyperlight with a registry zygote and a seal key", edit: func(cg *v1alpha1.CapacityGrant) {
+			hyperlight(cg)
+			cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: cg.Spec.Zygote.Digest, Registry: "registry.example/team-a", SealKeySecretName: "team-a-seal"}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			cg := &v1alpha1.CapacityGrant{}
 			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(readSample(t, ns).Object, cg); err != nil {
 				t.Fatal(err)
 			}
 			cg.Name = "web"
-			cg.Spec.Runtime = rt
-			if rt == v1alpha1.RuntimeHyperlight {
-				cg.Spec.HelperImage = "ghcr.io/azure/fiberd-helper:0.4.0@" + testDigest
-			}
+			tc.edit(cg)
 			tmpl, err := podtemplate.Build(cg, cg.Spec.PodTemplate.Spec.Containers[0].Image, workload.ObjectName(cg), podtemplate.Options{
 				IssuerURL: "https://fiberd-k8s-controller.fiberd-system.svc",
 				Lease:     10 * time.Minute,
