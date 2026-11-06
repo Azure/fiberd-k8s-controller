@@ -20,7 +20,7 @@ On an upgrade from a version without the policy, create default right after the 
 
 A CapacityGrant's zygote is either a command in the image or an artifact fiberd pulls by digest from a registry. A cluster admin opts in to registries by listing repositories in the GrantPolicy's `registries`, and until then every registry grant is refused. Plain HTTP passes only under an entry that spells `http://`. fiberd pulls anonymously today, so only public repositories work, and runtime `hyperlight` cannot run a pulled zygote yet.
 
-Either zygote may name a Secret in the grant's namespace whose `seal-key.json` key holds the tenant's seal key, which seals the grant's deltas and opens sealed artifacts. Each namespace keeps its own key, not one across the fleet. These fields replace the `-registry` and `-delta-seal-key` args, which a tenant can no longer set.
+Either zygote may name a Secret in the grant's namespace whose `seal-key.json` key holds the tenant's seal key, which seals the grant's deltas and opens sealed artifacts. Each namespace keeps its own key. These fields replace the `-registry` and `-delta-seal-key` args, which a tenant can no longer set.
 
 ```yaml
 spec:

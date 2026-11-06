@@ -341,7 +341,7 @@ func TestPolicyRefusals(t *testing.T) {
 			name:   "refuses a registry zygote while spec.registries is unset",
 			mutate: setRegistry("registry.example/team-a"),
 			reason: metav1.StatusReasonForbidden,
-			substr: "registry registry.example/team-a " + imageListMessage + " in GrantPolicy default spec.registries",
+			substr: "registry registry.example/team-a " + registryListMessage,
 		},
 		{
 			name:   "admits a listed image by digest without a tag",
@@ -882,7 +882,6 @@ func TestPolicyRegistry(t *testing.T) {
 		httpHost = "registry.local:5000/zygotes"
 		httpRepo = "http://" + httpHost
 	)
-	registryListMessage := imageListMessage + " in GrantPolicy default spec.registries"
 	ns := namespace(t)
 	listed := readSample(t, ns)
 	setRegistry(tlsRepo)(t, listed)
