@@ -162,7 +162,7 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 		Clock:          clk,
 		Log:            ctrl.Log.WithName("issuer"),
 	})
-	srv, err := issuer.NewServer(ctx, o.IssuerAddr, handler.Routes(), cw.GetCertificate)
+	srv, err := issuer.NewServer(ctx, o.IssuerAddr, handler.Routes(), cw.GetCertificate, clk)
 	if err != nil {
 		return nil, fmt.Errorf("create the issuer server: %w", err)
 	}

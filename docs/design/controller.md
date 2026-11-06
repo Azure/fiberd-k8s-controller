@@ -12,7 +12,7 @@ fiberd never schedules anything. A **home** adapts it to where it runs. The home
 
 The controller adds the Kubernetes control plane. A CapacityGrant is the **tenant**'s custom resource asking for capacity. The controller turns it into a Deployment and a Service and reports status. Kubernetes alone schedules, replaces, rolls out and evicts the Pods.
 
-The controller is the **issuer** too. It signs a grant for each grant Pod, a Pod of that Deployment, and publishes its public keys as the key set. One elected controller replica reconciles, while every replica issues grants and serves the discovery document and key set over HTTPS. The issuer URL is a ClusterIP Service in front of the replicas. A replica reports ready only once its caches have synced and its HTTPS listener serves with a loaded certificate.
+The controller is the **issuer** too. It signs a grant for each grant Pod, a Pod of that Deployment, and publishes its public keys as the key set. One elected controller replica reconciles, while every replica issues grants and serves the discovery document and key set over HTTPS. The issuer URL is a ClusterIP Service in front of the replicas. A replica reports ready only once its caches have synced and its HTTPS listener serves with a certificate that has not expired. Both replicas share one certificate, so if renewal stops they go unready together when it expires. Neither restarts, the leader keeps reconciling, and a renewed certificate brings them back.
 
 ## Two projects
 

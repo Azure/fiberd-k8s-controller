@@ -3,6 +3,7 @@ package issuer
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -43,6 +45,7 @@ type Server struct {
 	inner manager.Server
 
 	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	clock          clock.PassiveClock
 	serving        atomic.Bool
 }
 
@@ -57,10 +60,11 @@ var (
 // manager starts, as controller-runtime's own probe and metrics listeners
 // do. getCertificate answers every handshake, so a certwatcher behind it
 // rotates the certificate without a restart. ctx is the base context of
-// every request, and its logger takes what net/http reports.
-func NewServer(ctx context.Context, addr string, handler http.Handler, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) (*Server, error) {
-	if handler == nil || getCertificate == nil {
-		return nil, errors.New("issuer: the server needs a handler and a certificate getter")
+// every request, and its logger takes what net/http reports. clk tells Ready
+// when the certificate has expired.
+func NewServer(ctx context.Context, addr string, handler http.Handler, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error), clk clock.PassiveClock) (*Server, error) {
+	if handler == nil || getCertificate == nil || clk == nil {
+		return nil, errors.New("issuer: the server needs a handler, a certificate getter and a clock")
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -84,6 +88,7 @@ func NewServer(ctx context.Context, addr string, handler http.Handler, getCertif
 			ShutdownTimeout: ptr.To(shutdownTimeout),
 		},
 		getCertificate: getCertificate,
+		clock:          clk,
 	}, nil
 }
 
@@ -136,9 +141,16 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // Ready is the readyz check of the listener. It passes only while Start
-// runs and a serving certificate is loaded, so a replica whose certificate
-// files never parsed does not report ready. The getter is asked without a
-// hello, as certwatcher answers without one.
+// runs and the loaded leaf has not expired, since a client refuses an
+// expired leaf and a replica serving one cannot serve at all. The getter is
+// asked without a hello, as certwatcher answers without one. certwatcher.New
+// fails on a pair it cannot read, so only another getter meets the checks
+// for an error or no certificate.
+//
+// Ready reads the pair already loaded, and certwatcher replaces that only
+// with a whole pair that parses, so a rotation in progress cannot fail it.
+// NotBefore is left alone, because a fresh leaf can sit seconds ahead of
+// this node's clock and would drop a replica on every renewal.
 func (s *Server) Ready(*http.Request) error {
 	if !s.serving.Load() {
 		return errors.New("issuer: server not started")
@@ -150,7 +162,27 @@ func (s *Server) Ready(*http.Request) error {
 	if cert == nil {
 		return errors.New("issuer: no serving certificate loaded")
 	}
+	leaf, err := leafOf(cert)
+	if err != nil {
+		return fmt.Errorf("issuer: read serving certificate: %w", err)
+	}
+	if s.clock.Now().After(leaf.NotAfter) {
+		return fmt.Errorf("issuer: serving certificate expired at %s", leaf.NotAfter.Format(time.RFC3339))
+	}
 	return nil
+}
+
+// leafOf returns the parsed leaf of cert. tls.X509KeyPair sets Leaf, so a
+// pair from certwatcher costs no parsing here. Another getter may leave it
+// unset, and that must not pass as unexpired.
+func leafOf(cert *tls.Certificate) (*x509.Certificate, error) {
+	if cert.Leaf != nil {
+		return cert.Leaf, nil
+	}
+	if len(cert.Certificate) == 0 {
+		return nil, errors.New("it holds no certificate")
+	}
+	return x509.ParseCertificate(cert.Certificate[0])
 }
 
 // Addr is the bound address. With a port of 0 it carries the port the
