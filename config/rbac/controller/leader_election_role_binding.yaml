@@ -1,5 +1,5 @@
 # Binds the generated Role in fiberd-system, which holds the leader-election
-# Lease and its Events.
+# Lease, its Events and the rules for the grant key Secret.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

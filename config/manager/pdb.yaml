@@ -1,5 +1,6 @@
 # Keeps one replica through a voluntary disruption such as a node drain. A
-# replica counts once /readyz reports its caches synced.
+# replica counts once /readyz passes, which needs its caches synced and its
+# issuer listener serving.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

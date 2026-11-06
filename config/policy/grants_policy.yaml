@@ -145,7 +145,8 @@ spec:
       messageExpression: "'arg ' + variables.args.filter(a, !a.contains('=') && !(a in variables.bareArgs))[0] + ' must carry its value as -name=value'"
       message: "a podTemplate arg must carry its value as -name=value, only a boolean flag may be bare"
       reason: Invalid
-    # An absent image is allowed. A later change defaults it from the runtime.
+    # An absent image passes here. The controller reports InvalidSpec until
+    # the grant sets one.
     - expression: "variables.image == '' || variables.image.matches('@sha256:[a-f0-9]{64}$')"
       message: "the fiberd container image must carry a digest, such as ghcr.io/azure/fiberd:0.4.0@sha256:..."
       reason: Invalid
