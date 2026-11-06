@@ -1,0 +1,39 @@
+# The grant of the smoke stage. Its image has no test hooks, so fiberd admits
+# only the grant the controller issued to the Pod, the path a real tenant takes.
+# __DIGEST__ is the digest conform.sh read from the node.
+apiVersion: fiberd.io/v1alpha1
+kind: CapacityGrant
+metadata:
+  name: plain
+  namespace: conform
+spec:
+  zygote:
+    digest: sha256:0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a
+    command: ["/usr/local/bin/refzygote", "--heap-mb", "16"]
+  fibers:
+    max: 2
+  runtime: proc
+  podTemplate:
+    spec:
+      containers:
+        - name: fiberd
+          image: localhost/fiberd-plain@__DIGEST__
+          resources:
+            limits:
+              memory: 512Mi
+---
+# The smoke test on the host reaches the Pod through this Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: plain-nodeport
+  namespace: conform
+spec:
+  type: NodePort
+  selector:
+    fiberd.io/grant: plain
+  ports:
+    - name: grpc
+      port: 8484
+      targetPort: 8484
+      nodePort: 30085

@@ -15,10 +15,16 @@ ENVTEST_BIN_DIR ?= $(CURDIR)/bin/envtest
 
 CONTROLLER_IMAGE ?= localhost/fiberd-k8s-controller:dev
 CONTROLLER_DOCKERFILE := dockerfiles/controller/Dockerfile
+CONTROLLER_CONTEXT ?= .
+
+# The fiberd the kind run tests, as main, a commit, a tag or pin for the go.mod
+# pin. Empty leaves the choice to hack/tests/kind/fiberd-src.sh.
+FIBERD_REF ?=
+export FIBERD_REF
 
 .DEFAULT_GOAL := help
 
-.PHONY: help manifests generate chart fmt vet lint test test-envtest test-chart image image-multiarch kind-deps tidy verify
+.PHONY: help manifests generate chart fmt vet lint test test-envtest test-chart image image-multiarch kind-up kind-images kind-deps kind-deploy kind-smoke kind-conform kind-dump kind-down conform-kind tidy verify
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -38,10 +44,10 @@ chart:
 fmt:
 	$(GO) fmt ./...
 
-# The envtest and chart tags add test/envtest and test/chart, which build only
-# under them.
+# The envtest, chart and e2e tags add test/envtest, test/chart and test/e2e,
+# which build only under them.
 vet:
-	$(GO) vet -tags envtest,chart ./...
+	$(GO) vet -tags envtest,chart,e2e ./...
 
 lint:
 	$(GOLANGCI_LINT) run
@@ -59,7 +65,7 @@ test-chart:
 
 # The host architecture, with no attestation manifest, so kind can load it.
 image:
-	docker buildx build --provenance=false --load -t $(CONTROLLER_IMAGE) -f $(CONTROLLER_DOCKERFILE) .
+	docker buildx build --provenance=false --load -t $(CONTROLLER_IMAGE) -f $(CONTROLLER_DOCKERFILE) $(CONTROLLER_CONTEXT)
 
 # Both architectures with no push. The commit's time stamps every layer, so
 # the same commit gives the same image.
@@ -68,8 +74,36 @@ image-multiarch:
 		--build-arg SOURCE_DATE_EPOCH="$$(git log -1 --format=%ct)" \
 		--output type=image,push=false,rewrite-timestamp=true -f $(CONTROLLER_DOCKERFILE) .
 
+# One stage of the kind run each, on the cluster that is there, so a rerun keeps
+# it. They go through conform.sh, whose private kubeconfig keeps them off every
+# other cluster.
+kind-up:
+	hack/tests/kind/conform.sh up
+
+kind-images:
+	hack/tests/kind/conform.sh images
+
 kind-deps:
-	hack/tests/kind/deps.sh
+	hack/tests/kind/conform.sh deps
+
+kind-deploy:
+	hack/tests/kind/conform.sh deploy
+
+kind-smoke:
+	hack/tests/kind/conform.sh smoke
+
+kind-conform:
+	hack/tests/kind/conform.sh conform
+
+kind-dump:
+	hack/tests/kind/conform.sh dump
+
+kind-down:
+	hack/tests/kind/conform.sh down
+
+# Every stage of the kind run, on a new cluster.
+conform-kind:
+	hack/tests/kind/conform.sh all
 
 tidy:
 	$(GO) mod tidy

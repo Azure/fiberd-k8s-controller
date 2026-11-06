@@ -1,0 +1,46 @@
+# The grant fiberd's conformance suite runs against. Its image carries the test
+# hooks, and __DIGEST__ is the digest conform.sh read from the node. Each case
+# admits a grant of its own with a warm template, and a run keeps about a dozen
+# until their leases lapse, so the memory limit covers all of them.
+apiVersion: fiberd.io/v1alpha1
+kind: CapacityGrant
+metadata:
+  name: conform
+  namespace: conform
+spec:
+  zygote:
+    digest: sha256:c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0
+    command: ["/usr/local/bin/refzygote", "--heap-mb", "16"]
+  fibers:
+    max: 8
+  writeBudget: 32Mi
+  runtime: proc
+  podTemplate:
+    spec:
+      containers:
+        - name: fiberd
+          image: localhost/fiberd-conform@__DIGEST__
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+# The controller's own Service is ClusterIP and it reverts edits, so the suite
+# on the host reaches the Pod through this one. It lists a Pod that is not Ready
+# yet because fiberd listens before the Pod turns Ready again after the suite
+# restarts it, and the suite's client must reconnect within seconds of that.
+apiVersion: v1
+kind: Service
+metadata:
+  name: conform-nodeport
+  namespace: conform
+spec:
+  type: NodePort
+  publishNotReadyAddresses: true
+  selector:
+    fiberd.io/grant: conform
+  ports:
+    - name: grpc
+      port: 8484
+      targetPort: 8484
+      nodePort: 30084

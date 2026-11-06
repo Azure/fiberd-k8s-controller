@@ -1,0 +1,27 @@
+# One node for the end-to-end run. fiberd's conformance suite and the smoke
+# test run on the host, and these mappings publish the NodePort of each grant.
+# A port-forward would die with the container when the suite restarts it.
+#
+# One node has no quorum to protect, so etcd skips its fsyncs. kind renders
+# kubeadm's v1beta4 config for this node image, where extraArgs is a list.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    etcd:
+      local:
+        extraArgs:
+          - name: unsafe-no-fsync
+            value: "true"
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30084
+        hostPort: 30084
+        listenAddress: 127.0.0.1
+        protocol: TCP
+      - containerPort: 30085
+        hostPort: 30085
+        listenAddress: 127.0.0.1
+        protocol: TCP

@@ -1,0 +1,15 @@
+# The chart's values for the kind run. conform.sh passes image.digest, which it
+# reads from the node after it loads the image.
+image:
+  repository: localhost/fiberd-k8s-controller
+
+# Only these values list the kind-only grant images.
+grantPolicy:
+  images:
+    - localhost/fiberd-plain
+    - localhost/fiberd-conform
+  runtimes: [proc]
+
+tenants:
+  - namespace: conform
+    authorGroup: fiberd-e2e-authors
