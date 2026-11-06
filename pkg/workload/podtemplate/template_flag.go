@@ -11,8 +11,7 @@ import (
 )
 
 // The seal key volume holds the Secret spec.zygote.sealKeySecretName names.
-// It sits under /var/run/secrets/fiberd.io, which ownedDirs keeps from the
-// tenant.
+// It sits outside mountRoots, so no tenant mount can replace it or hide it.
 const (
 	sealKeyVolume = "fiberd-seal-key"
 	sealKeyDir    = "/var/run/secrets/fiberd.io/seal-key"
@@ -75,7 +74,7 @@ func zygoteArgs(fld *field.Path, z v1alpha1.ZygoteSpec) ([]string, field.ErrorLi
 	}
 	if z.SealKeySecretName != "" {
 		// proc fibers run as fiberd's uid, so only hiding the directory
-		// keeps the fleet's key from them.
+		// keeps the tenant's key from them.
 		args = append(args, "-delta-seal-key="+sealKeyFile, "-fiber-hide="+sealKeyDir)
 	}
 	return args, nil

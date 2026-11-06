@@ -116,16 +116,19 @@ type ZygoteSpec struct {
 
 	// registry is the OCI repository fiberd pulls the zygote artifact from by digest, such
 	// as ghcr.io/team-a/zygotes, or http://registry.local:5000/zygotes for plain HTTP. It
-	// is the value of fiberd's -registry flag. Runtime hyperlight does not take it yet, since
-	// its helper would not run the pulled executable.
+	// is the value of fiberd's -registry flag. GrantPolicy spec.registries must list it, and
+	// fiberd pulls anonymously, so the repository must be public. Runtime hyperlight does not
+	// take it yet, since its helper would not run the pulled executable.
 	// +optional
 	// +kubebuilder:validation:MaxLength=255
 	// +kubebuilder:validation:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 	Registry string `json:"registry,omitempty"`
 
-	// sealKeySecretName names a Secret in the grant's namespace that holds the fleet's seal
-	// key under the key seal-key.json. fiberd seals the grant's deltas with it, and opens
-	// sealed author images of registry artifacts with it.
+	// sealKeySecretName names a Secret in the grant's namespace that holds the tenant's seal
+	// key under the key seal-key.json. Each namespace keeps its own key, not one across the
+	// fleet. fiberd seals the grant's deltas with it, and opens sealed author images of
+	// registry artifacts with it. The file is mounted for root alone, so a fiberd container
+	// with a non-root runAsUser also needs fsGroup in the Pod's securityContext.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`

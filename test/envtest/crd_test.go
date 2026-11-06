@@ -238,7 +238,7 @@ func TestCRDValidation(t *testing.T) {
 		},
 		{
 			name:   "a registry zygote with a seal key is accepted",
-			mutate: setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes", "sealKeySecretName": "fleet-seal"}),
+			mutate: setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes", "sealKeySecretName": "team-a-seal"}),
 		},
 		{
 			name: "a registry zygote on runtime runc is accepted",
@@ -268,7 +268,7 @@ func TestCRDValidation(t *testing.T) {
 		},
 		{
 			name:   "a command zygote with a seal key is accepted",
-			mutate: setZygote(map[string]any{"command": []any{"/z"}, "sealKeySecretName": "fleet-seal"}),
+			mutate: setZygote(map[string]any{"command": []any{"/z"}, "sealKeySecretName": "team-a-seal"}),
 		},
 		{
 			name:    "a registry with a tag",

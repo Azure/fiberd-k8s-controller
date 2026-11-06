@@ -313,7 +313,7 @@ func TestBuildVolumes(t *testing.T) {
 	tlsMount := corev1.VolumeMount{Name: "fiberd-tls", MountPath: "/var/run/fiberd/tls", ReadOnly: true}
 	tokenMount := corev1.VolumeMount{Name: "fiberd-grant-token", MountPath: "/var/run/secrets/fiberd.io/grant", ReadOnly: true}
 	sealVol := corev1.Volume{Name: "fiberd-seal-key", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-		SecretName:  "fleet-seal",
+		SecretName:  "team-a-seal",
 		Items:       []corev1.KeyToPath{{Key: "seal-key.json", Path: "seal-key.json"}},
 		DefaultMode: ptr.To[int32](0o400),
 	}}}
@@ -346,7 +346,7 @@ func TestBuildVolumes(t *testing.T) {
 		},
 		{
 			name:        "a seal key Secret is mounted read-only",
-			zygote:      &v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z", SealKeySecretName: "fleet-seal"},
+			zygote:      &v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z", SealKeySecretName: "team-a-seal"},
 			wantVolumes: []corev1.Volume{stateVol, grantsVol, tlsVol, tokenVol, sealVol},
 			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount, tlsMount, tokenMount, sealMount},
 		},

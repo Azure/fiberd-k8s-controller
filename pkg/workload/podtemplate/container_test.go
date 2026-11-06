@@ -119,7 +119,7 @@ func TestBuildArgs(t *testing.T) {
 		},
 		{
 			name: "a command zygote may share the seal key for its deltas",
-			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.SealKeySecretName = "fleet-seal" }},
+			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { cg.Spec.Zygote.SealKeySecretName = "team-a-seal" }},
 			want: append(wantProcArgs(),
 				"-delta-seal-key=/var/run/secrets/fiberd.io/seal-key/seal-key.json",
 				"-fiber-hide=/var/run/secrets/fiberd.io/seal-key"),
@@ -127,7 +127,7 @@ func TestBuildArgs(t *testing.T) {
 		{
 			name: "a seal key adds its file and hides its directory",
 			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) {
-				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes", SealKeySecretName: "fleet-seal"}
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes", SealKeySecretName: "team-a-seal"}
 			}},
 			want: append(withArg(wantProcArgs(), "-template=", "-registry=ghcr.io/team-a/zygotes"),
 				"-delta-seal-key=/var/run/secrets/fiberd.io/seal-key/seal-key.json",
@@ -275,7 +275,7 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 			name:         "registry zygote with a seal key",
 			runtime:      v1alpha1.RuntimeGvisor,
 			registry:     "ghcr.io/team-a/zygotes",
-			sealKey:      "fleet-seal",
+			sealKey:      "team-a-seal",
 			wantRuntime:  "gvisor",
 			wantGvisor:   "/usr/share/fiberd/rootfs",
 			wantRegistry: "ghcr.io/team-a/zygotes",

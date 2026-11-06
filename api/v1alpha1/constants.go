@@ -38,7 +38,7 @@ const (
 	RegistryPattern = `^(http://)?` + repositoryBody + `$`
 
 	// SealKeySecretKey is the data key of the Secret spec.zygote.sealKeySecretName names. It
-	// holds the fleet's 32-byte symmetric seal key as a JWK.
+	// holds the tenant's 32-byte symmetric seal key as a JWK.
 	SealKeySecretKey = "seal-key.json"
 
 	// ConditionProgressing reports whether the grant Pods are being rolled out.
