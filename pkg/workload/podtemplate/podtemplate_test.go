@@ -313,7 +313,7 @@ func TestBuildVolumes(t *testing.T) {
 	tlsMount := corev1.VolumeMount{Name: "fiberd-tls", MountPath: "/var/run/fiberd/tls", ReadOnly: true}
 	tokenMount := corev1.VolumeMount{Name: "fiberd-grant-token", MountPath: "/var/run/secrets/fiberd.io/grant", ReadOnly: true}
 	sealVol := corev1.Volume{Name: "fiberd-seal-key", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-		SecretName:  "fleet-seal",
+		SecretName:  "team-a-seal",
 		Items:       []corev1.KeyToPath{{Key: "seal-key.json", Path: "seal-key.json"}},
 		DefaultMode: ptr.To[int32](0o400),
 	}}}
@@ -346,7 +346,7 @@ func TestBuildVolumes(t *testing.T) {
 		},
 		{
 			name:        "a seal key Secret is mounted read-only",
-			zygote:      &v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z", SealKeySecretName: "fleet-seal"},
+			zygote:      &v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z", SealKeySecretName: "team-a-seal"},
 			wantVolumes: []corev1.Volume{stateVol, grantsVol, tlsVol, tokenVol, sealVol},
 			wantMounts:  []corev1.VolumeMount{stateMount, grantsMount, tlsMount, tokenMount, sealMount},
 		},
@@ -467,6 +467,7 @@ func TestBuildMountPaths(t *testing.T) {
 // TestBuildOverlayAvoidsMountRoots ties the overlay to the tenant's rules.
 // Every volume it adds carries a name a tenant may not use, and no mount of it
 // is at, under or above a root, where a tenant mount could replace it or hide it.
+// Each grant names a seal key, so the seal key's volume and mount are among them.
 func TestBuildOverlayAvoidsMountRoots(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -479,7 +480,10 @@ func TestBuildOverlayAvoidsMountRoots(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cg := testGrant(func(cg *v1alpha1.CapacityGrant) { setRuntime(cg, tc.runtime) })
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, tc.runtime)
+				cg.Spec.Zygote.SealKeySecretName = "seal"
+			})
 			spec := mustBuild(t, cg, testOptions()).Spec
 			for _, v := range spec.Volumes {
 				if !isOwnedVolume(v.Name) {
@@ -707,6 +711,21 @@ func TestBuildErrors(t *testing.T) {
 			name: "zygote registry with a tag",
 			mod: func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z:latest"}
+			},
+			wantErr: "spec.zygote.registry: Invalid value",
+		},
+		{
+			name: "zygote registry on runtime hyperlight",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, v1alpha1.RuntimeHyperlight)
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/a/z"}
+			},
+			wantErr: "spec.zygote.registry: Forbidden",
+		},
+		{
+			name: "zygote registry stored with an https scheme",
+			mod: func(cg *v1alpha1.CapacityGrant) {
+				cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "https://ghcr.io/a/z"}
 			},
 			wantErr: "spec.zygote.registry: Invalid value",
 		},

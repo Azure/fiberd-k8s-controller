@@ -653,6 +653,9 @@ func TestServeGrantIssues(t *testing.T) {
 			if w.Code != http.StatusOK {
 				t.Fatalf("status = %d, body %s, want %d", w.Code, w.Body, http.StatusOK)
 			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
 			var got grantAnswer
 			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 				t.Fatalf("the body %q is not a grant answer: %v", w.Body, err)

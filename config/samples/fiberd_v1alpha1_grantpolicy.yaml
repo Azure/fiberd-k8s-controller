@@ -2,7 +2,9 @@
 # repository and matches images under it with any tag. The gvisor
 # repository is listed for the day gvisor joins runtimes. privilegedNamespaces
 # is empty on purpose, so no grant may run a privileged fiberd container
-# until an admin names its namespace.
+# until an admin names its namespace. registries is unset on purpose too, so
+# no grant may pull its zygote until an admin lists the repository, as
+# ghcr.io/team-a or, for plain HTTP, http://registry.local:5000/zygotes.
 apiVersion: fiberd.io/v1alpha1
 kind: GrantPolicy
 metadata:

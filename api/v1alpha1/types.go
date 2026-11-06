@@ -28,6 +28,7 @@ const (
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",message="helperImage is allowed only for runtime hyperlight",fieldPath=".helperImage",reason="FieldValueForbidden"
 // +kubebuilder:validation:XValidation:rule="!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",message="runtime hyperlight needs helperImage, fiberd does not start without its helper",fieldPath=".helperImage",reason="FieldValueRequired"
+// +kubebuilder:validation:XValidation:rule="!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight'",message="zygote.registry is not allowed for runtime hyperlight, which does not run a pulled zygote yet",fieldPath=".zygote.registry",reason="FieldValueForbidden"
 type CapacityGrantSpec struct {
 	// zygote is the program every fiber of the grant is cloned from.
 	// +required
@@ -115,15 +116,19 @@ type ZygoteSpec struct {
 
 	// registry is the OCI repository fiberd pulls the zygote artifact from by digest, such
 	// as ghcr.io/team-a/zygotes, or http://registry.local:5000/zygotes for plain HTTP. It
-	// is the value of fiberd's -registry flag.
+	// is the value of fiberd's -registry flag. GrantPolicy spec.registries must list it, and
+	// fiberd pulls anonymously, so the repository must be public. Runtime hyperlight does not
+	// take it yet, since its helper would not run the pulled executable.
 	// +optional
 	// +kubebuilder:validation:MaxLength=255
-	// +kubebuilder:validation:Pattern=`^(https?://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+	// +kubebuilder:validation:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 	Registry string `json:"registry,omitempty"`
 
-	// sealKeySecretName names a Secret in the grant's namespace that holds the fleet's seal
-	// key under the key seal-key.json. fiberd seals the grant's deltas with it, and opens
-	// sealed author images of registry artifacts with it.
+	// sealKeySecretName names a Secret in the grant's namespace that holds the tenant's seal
+	// key, one per namespace, under the key seal-key.json. fiberd seals the grant's deltas
+	// with it, and opens sealed author images of registry artifacts with it. The file is
+	// mounted for root alone, so a fiberd container with a non-root runAsUser also needs
+	// fsGroup in the Pod's securityContext.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`

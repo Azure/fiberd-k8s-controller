@@ -32,6 +32,21 @@ type GrantPolicySpec struct {
 	// +kubebuilder:validation:items:Pattern=`^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 	HelperImages []string `json:"helperImages,omitempty"`
 
+	// registries lists the repositories a registry zygote may come from, spelled as
+	// spec.zygote.registry spells them, such as ghcr.io/team-a or
+	// http://registry.local:5000/zygotes. An entry matches a registry that equals it or
+	// continues with /, so ghcr.io/team-a matches ghcr.io/team-a/zygotes and not
+	// ghcr.io/team-a-tools. The scheme is compared too, so plain HTTP passes only under an
+	// entry that spells http://. A registry zygote is code this policy never sees, so while
+	// the list is unset no registry grant is admitted.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=255
+	// +kubebuilder:validation:items:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
+	Registries []string `json:"registries,omitempty"`
+
 	// privilegedNamespaces are the namespaces whose grants may set securityContext.privileged
 	// on the fiberd container, or ask for the gvisor or hyperlight runtime, which run
 	// privileged until their capability sets are measured.

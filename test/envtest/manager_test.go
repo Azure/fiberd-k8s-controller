@@ -216,7 +216,7 @@ func testHyperlight(t *testing.T) {
 func testRegistryZygote(t *testing.T) {
 	ns := tenantNamespace(t, true)
 	cg := newGrant(ns, "registry")
-	cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes", SealKeySecretName: "fleet-seal"}
+	cg.Spec.Zygote = v1alpha1.ZygoteSpec{Digest: testDigest, Registry: "ghcr.io/team-a/zygotes", SealKeySecretName: "team-a-seal"}
 	if err := admin.Create(t.Context(), cg); err != nil {
 		t.Fatalf("create CapacityGrant %s/%s: %v", ns, cg.Name, err)
 	}
@@ -232,8 +232,8 @@ func testRegistryZygote(t *testing.T) {
 		t.Errorf("args %q hold a -template flag beside the registry", args)
 	}
 	i := slices.IndexFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Secret != nil })
-	if i < 0 || spec.Volumes[i].Secret.SecretName != "fleet-seal" {
-		t.Errorf("volumes %v hold no volume of Secret fleet-seal", spec.Volumes)
+	if i < 0 || spec.Volumes[i].Secret.SecretName != "team-a-seal" {
+		t.Errorf("volumes %v hold no volume of Secret team-a-seal", spec.Volumes)
 	}
 }
 

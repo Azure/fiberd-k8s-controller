@@ -64,6 +64,9 @@ const (
 	uncleanMessage     = "is not a clean absolute path"
 	outsideMessage     = "must be at or under /config, /data, /secrets"
 
+	// registryListMessage is how the spec.registries rule ends its refusal.
+	registryListMessage = imageListMessage + " in GrantPolicy default spec.registries"
+
 	// paramNotFoundMessage is the stable part of the API server's refusal
 	// when a binding's parameterNotFoundAction is Deny and the parameter is
 	// missing. The API server treats that as a configuration error with no
