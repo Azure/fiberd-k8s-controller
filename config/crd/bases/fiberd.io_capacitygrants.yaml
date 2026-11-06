@@ -50,8 +50,9 @@ spec:
             properties:
               callerThumbprint:
                 description: |-
-                  callerThumbprint is the x5t#S256 thumbprint of the one client certificate allowed to
-                  present the grant. A home serving mutual TLS refuses a grant without it.
+                  callerThumbprint is the RFC 7638 thumbprint of the public key in the one client
+                  certificate allowed to present the grant. A home serving mutual TLS refuses a grant
+                  without it.
                 pattern: ^[A-Za-z0-9_-]{43}$
                 type: string
               fibers:
