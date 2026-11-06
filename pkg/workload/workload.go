@@ -36,9 +36,11 @@ type Workload interface {
 	Observe(ctx context.Context, cg *v1alpha1.CapacityGrant) (Observation, error)
 
 	// Apply makes the objects that run cg match tmpl, creating them when
-	// they are absent. It returns the API error unchanged in its chain, so
-	// the caller can tell a forbidden request from any other.
-	Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec) error
+	// they are absent. obs is what Observe reported in this pass, and a
+	// caller must not apply over a conflict. It returns the API error
+	// unchanged in its chain, so the caller can tell a forbidden request
+	// from any other.
+	Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec, obs Observation) error
 
 	// GrantOf returns the CapacityGrant that pod's owners lead to. Each
 	// object comes from r, so the caller chooses between the cache and a
@@ -61,6 +63,10 @@ type Observation struct {
 
 	// Found reports whether the grant's workload exists.
 	Found bool
+
+	// ServiceFound reports whether the grant controls an existing Service.
+	// Only then does Apply force ownership of it.
+	ServiceFound bool
 
 	// Available is how many of the grant's Pods are available.
 	Available int32

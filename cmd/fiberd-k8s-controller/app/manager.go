@@ -121,7 +121,7 @@ func NewManager(ctx context.Context, cfg *rest.Config, o *Options) (ctrl.Manager
 	}
 
 	clk := clock.RealClock{}
-	workload := deployment.New(mgr.GetClient())
+	workload := deployment.New(mgr.GetClient(), mgr.GetAPIReader())
 	r := &controller.CapacityGrantReconciler{
 		Client:   mgr.GetClient(),
 		Workload: workload,
@@ -192,20 +192,25 @@ func newScheme() (*runtime.Scheme, error) {
 }
 
 // cacheOptions drops managed fields, which nothing reads, and caches only
-// the Pods and ReplicaSets of grants, so the rest of a busy cluster costs
-// this process no memory. The grant route reads an object the filter hides
-// from the API server.
+// the Pods and ReplicaSets of grants and the Deployments and Services the
+// controller labelled, so the rest of a busy cluster costs this process no
+// memory and no watch traffic. The reconciler and the grant route read an
+// object the filter hides from the API server. That is how a foreign object
+// of a grant's name is still reported as a conflict.
 func cacheOptions() (cache.Options, error) {
 	ofGrant, err := labels.NewRequirement(v1alpha1.LabelGrant, selection.Exists, nil)
 	if err != nil {
 		return cache.Options{}, fmt.Errorf("select the objects of a grant: %w", err)
 	}
 	selector := labels.NewSelector().Add(*ofGrant)
+	managed := labels.SelectorFromSet(labels.Set{v1alpha1.LabelManagedBy: v1alpha1.ManagedBy})
 	return cache.Options{
 		DefaultTransform: cache.TransformStripManagedFields(),
 		ByObject: map[client.Object]cache.ByObject{
 			&corev1.Pod{}:        {Label: selector},
 			&appsv1.ReplicaSet{}: {Label: selector},
+			&appsv1.Deployment{}: {Label: managed},
+			&corev1.Service{}:    {Label: managed},
 		},
 	}, nil
 }

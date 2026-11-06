@@ -47,6 +47,9 @@ const (
 	rolloutFieldOwner = "kubectl-rollout"
 	restartedAtValue  = "2026-11-03T10:00:00Z"
 
+	// labelFieldOwner edits labels by hand, as kubectl label does.
+	labelFieldOwner = "kubectl-label"
+
 	// quietPeriod is how long a steady grant must leave its objects alone.
 	quietPeriod = 2 * time.Second
 
@@ -78,6 +81,7 @@ func TestManager(t *testing.T) {
 		{name: "a deleted Service is created again", run: testServiceReturns},
 		{name: "a foreign Deployment of the same name is left alone and the grant reports DeploymentConflict", run: testForeignDeployment},
 		{name: "a foreign Service of the same name is left alone and the grant reports ServiceConflict", run: testForeignService},
+		{name: "a managed-by label removed or changed on an owned object comes back with no conflict", run: testManagedByRestored},
 		{name: "a grant in a namespace without the tenant RoleBinding reports Forbidden and records a Warning Event", run: testForbidden},
 		{name: "a pass after a Deployment status change writes neither object", run: testSecondPass},
 	}
@@ -348,6 +352,59 @@ func testForeignService(t *testing.T) {
 	err := admin.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: workload.ObjectName(cg)}, &appsv1.Deployment{})
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("get Deployment beside a foreign Service = %v, want NotFound", err)
+	}
+}
+
+// testManagedByRestored takes owned objects out of the controller's cache by
+// their label. The watch reports a delete, the next pass finds each object
+// live and the apply puts the label back. The Service needs forced ownership
+// for that, since another field manager holds the changed label.
+func testManagedByRestored(t *testing.T) {
+	ns := tenantNamespace(t, true)
+	cg := createGrant(t, ns, "managed-by")
+	dep, svc := waitForObjects(t, cg)
+
+	edits := []struct {
+		name string
+		edit func(labels map[string]string)
+	}{
+		{name: "removed", edit: func(l map[string]string) { delete(l, v1alpha1.LabelManagedBy) }},
+		{name: "changed", edit: func(l map[string]string) { l[v1alpha1.LabelManagedBy] = "helm" }},
+	}
+	for _, obj := range []client.Object{dep, svc} {
+		key := client.ObjectKeyFromObject(obj)
+		for _, tc := range edits {
+			t.Run(fmt.Sprintf("%T %s", obj, tc.name), func(t *testing.T) {
+				got := obj.DeepCopyObject().(client.Object)
+				if err := admin.Get(t.Context(), key, got); err != nil {
+					t.Fatal(err)
+				}
+				before := got.DeepCopyObject().(client.Object)
+				tc.edit(got.GetLabels())
+				if err := admin.Patch(t.Context(), got, client.MergeFrom(before), client.FieldOwner(labelFieldOwner)); err != nil {
+					t.Fatalf("edit the label of %T %s: %v", obj, key, err)
+				}
+				testutil.Eventually(t, "the managed-by label of "+key.String()+" to come back", func(ctx context.Context) (bool, error) {
+					if err := admin.Get(ctx, key, got); err != nil {
+						return false, err
+					}
+					return got.GetLabels()[v1alpha1.LabelManagedBy] == v1alpha1.ManagedBy, nil
+				})
+				if got.GetUID() != obj.GetUID() {
+					t.Errorf("%T %s has UID %s, want the original %s", obj, key, got.GetUID(), obj.GetUID())
+				}
+				checkControllerRef(t, got, cg)
+			})
+		}
+	}
+
+	stored := &v1alpha1.CapacityGrant{}
+	if err := admin.Get(t.Context(), client.ObjectKeyFromObject(cg), stored); err != nil {
+		t.Fatal(err)
+	}
+	ready := meta.FindStatusCondition(stored.Status.Conditions, v1alpha1.ConditionReady)
+	if ready == nil || ready.Reason == v1alpha1.ReasonDeploymentConflict || ready.Reason == v1alpha1.ReasonServiceConflict {
+		t.Errorf("Ready condition = %+v, want no conflict reported", ready)
 	}
 }
 

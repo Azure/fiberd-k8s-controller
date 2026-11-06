@@ -88,8 +88,9 @@ type fakeWorkload struct {
 	observe func(ctx context.Context, cg *v1alpha1.CapacityGrant) (workload.Observation, error)
 	apply   func(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec) error
 
-	observed int
-	applied  []corev1.PodTemplateSpec
+	observed     int
+	applied      []corev1.PodTemplateSpec
+	observations []workload.Observation
 }
 
 var _ workload.Workload = &fakeWorkload{}
@@ -102,8 +103,9 @@ func (w *fakeWorkload) Observe(ctx context.Context, cg *v1alpha1.CapacityGrant) 
 	return w.observe(ctx, cg)
 }
 
-func (w *fakeWorkload) Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec) error {
+func (w *fakeWorkload) Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec, obs workload.Observation) error {
 	w.applied = append(w.applied, *tmpl.DeepCopy())
+	w.observations = append(w.observations, obs)
 	if w.apply == nil {
 		return nil
 	}
@@ -683,6 +685,21 @@ func TestReconcileAcrossPasses(t *testing.T) {
 // without defaulting or admission. The fake bumps resourceVersion on every
 // write, even one that changes nothing, so stored objects are compared
 // without it, and whether an identical apply keeps it is left to envtest.
+// TestReconcileAppliesWhatItObserved checks Apply gets this pass's
+// observation, which decides whether a Service is applied with force.
+func TestReconcileAppliesWhatItObserved(t *testing.T) {
+	obs := workload.Observation{Found: true, ServiceFound: true}
+	env := newTestEnv(t, []client.Object{testGrant()}, failures{})
+	w := &fakeWorkload{observe: observes(obs)}
+	env.r.Workload = w
+	if _, err := env.reconcile(later); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if diff := cmp.Diff([]workload.Observation{obs}, w.observations); diff != "" {
+		t.Errorf("observations Apply got (-want +got):\n%s", diff)
+	}
+}
+
 func TestReconcileWithDeployment(t *testing.T) {
 	msgForbidden := wantForbiddenMessage("apply Service team-a/fiberd-web: " + forbiddenFor("Service").Error())
 	foreignDeployment := &appsv1.Deployment{
@@ -746,7 +763,7 @@ func TestReconcileWithDeployment(t *testing.T) {
 				objs = append(objs, tc.foreign.DeepCopy())
 			}
 			env := newTestEnv(t, objs, tc.fail)
-			env.r.Workload = deployment.New(env.r.Client)
+			env.r.Workload = deployment.New(env.r.Client, env.r.Client)
 			ctx := context.Background()
 
 			var last ctrl.Result

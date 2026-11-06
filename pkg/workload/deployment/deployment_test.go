@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -81,6 +82,21 @@ func newClient(t *testing.T, funcs interceptor.Funcs, objs ...client.Object) cli
 		Build()
 }
 
+// countGets wraps funcs so that every Get adds to n.
+func countGets(funcs interceptor.Funcs, n *int) interceptor.Funcs {
+	inner := funcs.Get
+	funcs.Get = func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+		*n++
+		if inner != nil {
+			return inner(ctx, c, key, obj, opts...)
+		}
+		return c.Get(ctx, key, obj, opts...)
+	}
+	return funcs
+}
+
+// TestWorkloadObserve reads through a cache that holds objs and an API
+// server that also holds hidden, the objects the cache's filter leaves out.
 func TestWorkloadObserve(t *testing.T) {
 	serving := workload.Observation{
 		Found:     true,
@@ -92,27 +108,88 @@ func TestWorkloadObserve(t *testing.T) {
 			Message: `ReplicaSet "fiberd-web-1" has successfully progressed.`,
 		},
 	}
+	servingService := serving
+	servingService.ServiceFound = true
 
 	cases := []struct {
-		name    string
-		objs    []client.Object
-		funcs   interceptor.Funcs
-		want    workload.Observation
-		wantErr error
+		name      string
+		objs      []client.Object
+		hidden    []client.Object
+		funcs     interceptor.Funcs
+		liveFuncs interceptor.Funcs
+		want      workload.Observation
+		wantErr   error
+		// wantLive is how many reads reach the API server.
+		wantLive int
 	}{
 		{
-			name: "no Deployment and no Service observe as not found",
-			want: workload.Observation{},
+			name:     "a new grant reads each kind live once",
+			want:     workload.Observation{},
+			wantLive: 2,
 		},
 		{
-			name: "our Deployment and Service observe as found",
+			name: "our Deployment and Service in the cache cost no live read",
 			objs: []client.Object{servingDeployment(testUID), service(testUID)},
-			want: serving,
+			want: servingService,
 		},
 		{
-			name: "our Deployment without its Service still observes as found",
-			objs: []client.Object{servingDeployment(testUID)},
-			want: serving,
+			name:     "our Deployment without its Service still observes as found",
+			objs:     []client.Object{servingDeployment(testUID)},
+			want:     serving,
+			wantLive: 1,
+		},
+		{
+			name:     "our Service without its Deployment observes the Service",
+			objs:     []client.Object{service(testUID)},
+			want:     workload.Observation{ServiceFound: true},
+			wantLive: 1,
+		},
+		{
+			name:     "our objects that lost their label observe as found",
+			hidden:   []client.Object{servingDeployment(testUID), service(testUID)},
+			want:     servingService,
+			wantLive: 2,
+		},
+		{
+			name:   "a Deployment the cache hides is a conflict and stops the pass",
+			hidden: []client.Object{servingDeployment("")},
+			want: workload.Observation{
+				ConflictReason: v1alpha1.ReasonDeploymentConflict,
+				Message:        "Deployment fiberd-web already exists and is not controlled by CapacityGrant web.",
+			},
+			wantLive: 1,
+		},
+		{
+			name:   "a Service the cache hides is a conflict",
+			objs:   []client.Object{servingDeployment(testUID)},
+			hidden: []client.Object{service("")},
+			want: workload.Observation{
+				ConflictReason: v1alpha1.ReasonServiceConflict,
+				Message:        "Service fiberd-web already exists and is not controlled by CapacityGrant web.",
+			},
+			wantLive: 1,
+		},
+		{
+			name:   "a Service the cache hides beside no Deployment is a conflict",
+			hidden: []client.Object{service("")},
+			want: workload.Observation{
+				ConflictReason: v1alpha1.ReasonServiceConflict,
+				Message:        "Service fiberd-web already exists and is not controlled by CapacityGrant web.",
+			},
+			wantLive: 2,
+		},
+		{
+			name:      "a live Deployment read error is returned",
+			liveFuncs: failGet(&appsv1.Deployment{}),
+			wantErr:   errRead,
+			wantLive:  1,
+		},
+		{
+			name:      "a live Service read error is returned",
+			objs:      []client.Object{servingDeployment(testUID)},
+			liveFuncs: failGet(&corev1.Service{}),
+			wantErr:   errRead,
+			wantLive:  1,
 		},
 		{
 			name: "a Deployment with no controller is a conflict",
@@ -161,8 +238,13 @@ func TestWorkloadObserve(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w := New(newClient(t, tc.funcs, tc.objs...))
+			live := 0
+			liveClient := newClient(t, countGets(tc.liveFuncs, &live), slices.Concat(tc.objs, tc.hidden)...)
+			w := New(newClient(t, tc.funcs, tc.objs...), liveClient)
 			got, err := w.Observe(context.Background(), testGrant())
+			if live != tc.wantLive {
+				t.Errorf("live reads = %d, want %d", live, tc.wantLive)
+			}
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("Observe error = %v, want %v", err, tc.wantErr)
@@ -218,6 +300,18 @@ func editedService(t *testing.T) *corev1.Service {
 	return svc
 }
 
+// relabelledService is the grant's own Service after another manager
+// changed its managed-by label, which takes it out of the cache.
+func relabelledService(t *testing.T) *corev1.Service {
+	t.Helper()
+	svc, err := workload.BuildService(testGrant(), testScheme(t))
+	if err != nil {
+		t.Fatalf("BuildService: %v", err)
+	}
+	svc.Labels[v1alpha1.LabelManagedBy] = "helm"
+	return svc
+}
+
 // recordApplies wraps funcs so that every apply is recorded as its kind,
 // with " forced" added when it forces ownership.
 func recordApplies(funcs interceptor.Funcs, applied *[]string) interceptor.Funcs {
@@ -246,11 +340,14 @@ func recordApplies(funcs interceptor.Funcs, applied *[]string) interceptor.Funcs
 // exactly what Build returned.
 func TestWorkloadApply(t *testing.T) {
 	// A case's existing Service is created by another field manager before
-	// Apply. With wantUnchanged it must come out exactly as it went in.
+	// Apply. With wantUnchanged it must come out exactly as it went in. obs
+	// is what the pass observed.
+	ours := workload.Observation{ServiceFound: true}
 	cases := []struct {
 		name           string
 		tmpl           func(*corev1.PodTemplateSpec)
 		existing       func(*testing.T) *corev1.Service
+		obs            workload.Observation
 		funcs          interceptor.Funcs
 		wantErr        func(error) bool
 		wantApplies    []string
@@ -267,14 +364,24 @@ func TestWorkloadApply(t *testing.T) {
 		{
 			name:           "a hand edit to our own Service is restored",
 			existing:       editedService,
+			obs:            ours,
 			wantApplies:    []string{"Service forced", "Deployment forced"},
 			wantService:    true,
 			wantDeployment: true,
 		},
 		{
-			name:          "a foreign Service is neither applied nor altered",
+			name:           "a managed-by label another manager changed is restored",
+			existing:       relabelledService,
+			obs:            ours,
+			wantApplies:    []string{"Service forced", "Deployment forced"},
+			wantService:    true,
+			wantDeployment: true,
+		},
+		{
+			name:          "a foreign Service created since the read refuses the apply",
 			existing:      userService,
 			wantErr:       apierrors.IsConflict,
+			wantApplies:   []string{"Service"},
 			wantUnchanged: true,
 		},
 		{
@@ -316,7 +423,7 @@ func TestWorkloadApply(t *testing.T) {
 				}
 			}
 
-			err := New(c).Apply(context.Background(), cg, tmpl)
+			err := New(c, c).Apply(context.Background(), cg, tmpl, tc.obs)
 			if tc.wantErr != nil {
 				if !tc.wantErr(err) {
 					t.Fatalf("Apply error = %v, not the error wanted", err)
@@ -417,14 +524,14 @@ func TestWorkloadApplyTwice(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newClient(t, interceptor.Funcs{})
-			w := New(c)
+			w := New(c, c)
 			ctx := context.Background()
 			key := client.ObjectKey{Namespace: "team-a", Name: "fiberd-web"}
 			// The template is built from the grant without a device, so
 			// only the strategy can differ between the two applies.
 			tmpl := testTemplate(t, testGrant())
 
-			if err := w.Apply(ctx, tc.first, tmpl); err != nil {
+			if err := w.Apply(ctx, tc.first, tmpl, workload.Observation{}); err != nil {
 				t.Fatalf("first Apply: %v", err)
 			}
 			firstD, firstSvc := &appsv1.Deployment{}, &corev1.Service{}
@@ -435,7 +542,7 @@ func TestWorkloadApplyTwice(t *testing.T) {
 				t.Fatalf("get Service: %v", err)
 			}
 
-			if err := w.Apply(ctx, tc.second, tmpl); err != nil {
+			if err := w.Apply(ctx, tc.second, tmpl, workload.Observation{ServiceFound: true}); err != nil {
 				t.Fatalf("second Apply: %v", err)
 			}
 			d, svc := &appsv1.Deployment{}, &corev1.Service{}

@@ -38,9 +38,10 @@ func TestKeySecretMarker(t *testing.T) {
 	}
 }
 
-// TestCacheOptionsFilterGrantObjects pins what the grant route can read from
-// the cache. A filter that matched nothing would send every read live, and
-// one that matched everything would cache every Pod of the cluster.
+// TestCacheOptionsFilterGrantObjects pins what the reconciler and the grant
+// route can read from the cache. A filter that matched nothing would send
+// every read live, and one that matched everything would cache every Pod,
+// Deployment and Service of the cluster.
 func TestCacheOptionsFilterGrantObjects(t *testing.T) {
 	opts, err := cacheOptions()
 	if err != nil {
@@ -49,24 +50,40 @@ func TestCacheOptionsFilterGrantObjects(t *testing.T) {
 	if opts.DefaultTransform == nil {
 		t.Error("the cache keeps managed fields, want them dropped")
 	}
-	if got := len(opts.ByObject); got != 2 {
-		t.Fatalf("the cache filters %d kinds, want 2", got)
+	if got := len(opts.ByObject); got != 4 {
+		t.Fatalf("the cache filters %d kinds, want 4", got)
 	}
 
-	cases := []struct {
+	type labelCase struct {
 		name   string
 		labels labels.Set
 		want   bool
-	}{
+	}
+	ofGrant := []labelCase{
 		{name: "an object of a grant", labels: labels.Set{v1alpha1.LabelGrant: "web"}, want: true},
 		{name: "a label with no value still counts", labels: labels.Set{v1alpha1.LabelGrant: ""}, want: true},
 		{name: "an object of no grant", labels: labels.Set{"app": "web"}},
 		{name: "an object with no labels"},
 	}
-	for _, obj := range []client.Object{&corev1.Pod{}, &appsv1.ReplicaSet{}} {
-		selector := cacheSelector(t, opts, obj)
-		for _, tc := range cases {
-			t.Run(fmt.Sprintf("%T %s", obj, tc.name), func(t *testing.T) {
+	managed := []labelCase{
+		{name: "an object the controller manages", labels: labels.Set{v1alpha1.LabelManagedBy: v1alpha1.ManagedBy}, want: true},
+		{name: "an object another tool manages", labels: labels.Set{v1alpha1.LabelManagedBy: "helm"}},
+		{name: "an object of a grant's name with no label", labels: labels.Set{v1alpha1.LabelGrant: "web"}},
+		{name: "an object with no labels"},
+	}
+	kinds := []struct {
+		obj   client.Object
+		cases []labelCase
+	}{
+		{obj: &corev1.Pod{}, cases: ofGrant},
+		{obj: &appsv1.ReplicaSet{}, cases: ofGrant},
+		{obj: &appsv1.Deployment{}, cases: managed},
+		{obj: &corev1.Service{}, cases: managed},
+	}
+	for _, kind := range kinds {
+		selector := cacheSelector(t, opts, kind.obj)
+		for _, tc := range kind.cases {
+			t.Run(fmt.Sprintf("%T %s", kind.obj, tc.name), func(t *testing.T) {
 				if got := selector.Matches(tc.labels); got != tc.want {
 					t.Errorf("the selector %q matches %v = %t, want %t", selector, tc.labels, got, tc.want)
 				}

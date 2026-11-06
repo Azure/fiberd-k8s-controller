@@ -2,14 +2,14 @@
 // with a ClusterIP Service in front.
 //
 // The controller writes both objects by server-side apply under its own
-// field manager and reads them from the cache. A replacement Pod comes from
+// field manager. It reads them from a cache that holds only the objects it
+// labelled, and from the API server on a miss. A replacement Pod comes from
 // a rolling update, or from Recreate when the Pod holds an exclusive
 // device.
 package deployment
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -25,27 +25,35 @@ import (
 // Workload is the workload.Workload that runs a grant as a Deployment.
 type Workload struct {
 	client client.Client
+	reader client.Reader
 }
 
 var _ workload.Workload = (*Workload)(nil)
 
-// New returns a Workload that reads and applies through c. The scheme of c
-// must know the CapacityGrant kind, since the objects carry a controller
+// New returns a Workload that applies through c and reads through c, then
+// through live on a miss. The cache behind c may hold only the objects the
+// controller labelled, so live is what still finds any other. The scheme of
+// c must know the CapacityGrant kind, since the objects carry a controller
 // reference to their grant.
-func New(c client.Client) *Workload {
-	return &Workload{client: c}
+func New(c client.Client, live client.Reader) *Workload {
+	return &Workload{client: c, reader: workload.CacheThenLive(c, live)}
 }
 
 // Observe reads the Deployment and the Service named
 // workload.ObjectName(cg). An absent object is not an error. The Deployment
 // is checked first, so when both conflict the observation names the
 // Deployment.
+//
+// An object the cache does not hold is read live, so this is where a new
+// grant costs one Get per kind. A foreign object the cache filters out is
+// still reported. An object cg controls that lost its label is observed as
+// usual, and Apply puts the label back.
 func (w *Workload) Observe(ctx context.Context, cg *v1alpha1.CapacityGrant) (workload.Observation, error) {
 	key := client.ObjectKey{Namespace: cg.Namespace, Name: workload.ObjectName(cg)}
 
 	var obs workload.Observation
 	d := &appsv1.Deployment{}
-	switch err := w.client.Get(ctx, key, d); {
+	switch err := w.reader.Get(ctx, key, d); {
 	case apierrors.IsNotFound(err):
 	case err != nil:
 		return workload.Observation{}, fmt.Errorf("get Deployment %s: %w", key, err)
@@ -56,12 +64,14 @@ func (w *Workload) Observe(ctx context.Context, cg *v1alpha1.CapacityGrant) (wor
 	}
 
 	svc := &corev1.Service{}
-	switch err := w.client.Get(ctx, key, svc); {
+	switch err := w.reader.Get(ctx, key, svc); {
 	case apierrors.IsNotFound(err):
 	case err != nil:
 		return workload.Observation{}, fmt.Errorf("get Service %s: %w", key, err)
 	case !metav1.IsControlledBy(svc, cg):
 		return conflict(v1alpha1.ReasonServiceConflict, "Service", svc, cg), nil
+	default:
+		obs.ServiceFound = true
 	}
 	return obs, nil
 }
@@ -88,20 +98,19 @@ func conflict(reason, kind string, obj metav1.Object, cg *v1alpha1.CapacityGrant
 // The Deployment apply forces ownership, so a field another manager took
 // is taken back. Fields another manager owns alone, such as a restartedAt
 // annotation on the template, stay. Its immutable selector keeps it from
-// taking over a foreign Deployment the cache has not shown yet.
+// taking over a foreign Deployment created since Observe read.
 //
-// A Service has no immutable field to guard it, so Apply reads it first.
-// A Service cg controls is applied with forced ownership, so a hand edit
-// heals on the next pass as it does on the Deployment. A Service cg does
-// not control is never sent and Apply returns a Conflict error. An absent
-// Service is applied without forcing, so a foreign Service the cache has
-// not shown yet refuses the apply with a conflict on its selector instead
-// of being rewritten and adopted. A foreign Service with no selector holds
-// no field that conflicts, so that last guard does not cover it.
+// A Service has no immutable field to guard it, so obs decides. A Service
+// cg controls is applied with forced ownership, so a hand edit heals on the
+// next pass as it does on the Deployment. Any other Service is applied
+// without forcing, so a foreign Service created since Observe read refuses
+// the apply with a conflict on its selector instead of being rewritten and
+// adopted. A foreign Service with no selector holds no field that conflicts,
+// so that last guard does not cover it.
 //
 // An API error is returned wrapped, so apierrors.IsForbidden and
 // apierrors.IsConflict still see it.
-func (w *Workload) Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec) error {
+func (w *Workload) Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl corev1.PodTemplateSpec, obs workload.Observation) error {
 	scheme := w.client.Scheme()
 
 	svc, err := workload.BuildService(cg, scheme)
@@ -121,9 +130,9 @@ func (w *Workload) Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl c
 		return err
 	}
 
-	svcOpts, err := w.serviceApplyOptions(ctx, cg, svc)
-	if err != nil {
-		return err
+	svcOpts := []client.ApplyOption{client.FieldOwner(v1alpha1.ManagedBy)}
+	if obs.ServiceFound {
+		svcOpts = append(svcOpts, client.ForceOwnership)
 	}
 	if err := w.client.Apply(ctx, svcAC, svcOpts...); err != nil {
 		return fmt.Errorf("apply Service %s/%s: %w", svc.Namespace, svc.Name, err)
@@ -132,25 +141,4 @@ func (w *Workload) Apply(ctx context.Context, cg *v1alpha1.CapacityGrant, tmpl c
 		return fmt.Errorf("apply Deployment %s/%s: %w", d.Namespace, d.Name, err)
 	}
 	return nil
-}
-
-// serviceApplyOptions returns the options svc is applied with. It reads
-// the Service of svc's name from the client. Forced ownership is added
-// only when cg already controls that Service. When it exists and cg does
-// not control it, the error is a Conflict and nothing may be sent.
-func (w *Workload) serviceApplyOptions(ctx context.Context, cg *v1alpha1.CapacityGrant, svc *corev1.Service) ([]client.ApplyOption, error) {
-	opts := []client.ApplyOption{client.FieldOwner(v1alpha1.ManagedBy)}
-	key := client.ObjectKeyFromObject(svc)
-	current := &corev1.Service{}
-	switch err := w.client.Get(ctx, key, current); {
-	case apierrors.IsNotFound(err):
-		return opts, nil
-	case err != nil:
-		return nil, fmt.Errorf("get Service %s: %w", key, err)
-	case !metav1.IsControlledBy(current, cg):
-		msg := conflict(v1alpha1.ReasonServiceConflict, "Service", current, cg).Message
-		return nil, apierrors.NewConflict(corev1.Resource("services"), current.Name, errors.New(msg))
-	default:
-		return append(opts, client.ForceOwnership), nil
-	}
 }

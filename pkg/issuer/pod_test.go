@@ -301,7 +301,7 @@ func newGrantEnv(t *testing.T, tc grantCase, log logr.Logger) *grantEnv {
 		Reviewer:       fakeReviewer{status: status, err: tc.reviewErr},
 		Cache:          newReader(t, tc.cacheFuncs, cached),
 		Live:           newReader(t, tc.liveFuncs, live),
-		Workload:       deployment.New(nil),
+		Workload:       deployment.New(nil, nil),
 		Limits:         testLimits,
 		ServiceAccount: testServiceAccount,
 		Lease:          grantLease,
