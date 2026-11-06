@@ -50,8 +50,7 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 	}{
 		{name: "tenantFlags equals TenantFlags", variable: "tenantFlags", want: TenantFlags()},
 		{name: "bareArgs holds both forms of TenantBoolFlags", variable: "bareArgs", want: bareArgs, anyOrder: true},
-		{name: "ownedDirs equals ownedDirs", variable: "ownedDirs", want: ownedDirs, anyOrder: true},
-		{name: "trustPaths equals trustPaths", variable: "trustPaths", want: trustPaths, anyOrder: true},
+		{name: "mountRoots equals mountRoots", variable: "mountRoots", want: mountRoots},
 		{name: "ownedVolumes equals ownedVolumes", variable: "ownedVolumes", want: ownedVolumes, anyOrder: true},
 		{
 			name:     "reservedKeyPrefixes equals reservedKeyPrefixes",

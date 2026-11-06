@@ -30,4 +30,6 @@ spec:
 
 A CapacityGrant's args may name only the fiberd flags a tenant sets. [`pkg/workload/podtemplate/args.go`](./pkg/workload/podtemplate/args.go) lists them with the reason for each, and the admission policy refuses the rest.
 
+A CapacityGrant may mount a volume only at or under `/data` for data volumes, `/config` for config files or `/secrets` for Secrets. The same holds for a device path and a termination message path. fiberd's images keep nothing in those directories, so a mount cannot replace anything fiberd runs or trusts.
+
 The project is under construction. A grant Pod fetches and renews its own grant, but a caller cannot fetch one yet. The work is tracked in the issues of this repository.
