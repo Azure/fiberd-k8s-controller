@@ -1,40 +1,44 @@
 package podtemplate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/yaml"
+
+	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
 
-// grantsPolicyFile is the admission policy that the builder's checks
-// repeat, seen from this package's directory.
-const grantsPolicyFile = "../../../config/policy/grants_policy.yaml"
+// The files these tests read, seen from this package's directory.
+const (
+	// grantsPolicyFile is the admission policy that the builder's checks
+	// repeat.
+	grantsPolicyFile = "../../../config/policy/grants_policy.yaml"
+
+	// grantCRDFile is the generated CapacityGrant schema.
+	grantCRDFile = "../../../config/crd/bases/fiberd.io_capacitygrants.yaml"
+)
+
+// hasSource finds each volume source the policy's has() chain names.
+var hasSource = regexp.MustCompile(`has\(v\.(\w+)\)`)
 
 // TestPolicyMatchesBuilder keeps the admission policy's lists and arg
 // pattern equal to the builder's. The two refuse the same grants, one at
 // admission and one at reconcile time, and nothing else ties them.
 func TestPolicyMatchesBuilder(t *testing.T) {
-	raw, err := os.ReadFile(grantsPolicyFile)
-	if errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("run from the repository, config/policy/grants_policy.yaml is missing: %v", err)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vap admissionregistrationv1.ValidatingAdmissionPolicy
-	if err := yaml.Unmarshal(raw, &vap); err != nil {
-		t.Fatalf("parse %s: %v", grantsPolicyFile, err)
-	}
-	if len(vap.Spec.Validations) == 0 {
-		t.Fatalf("%s has no validations", grantsPolicyFile)
-	}
+	vap := readPolicy(t)
 
 	boolFlags := TenantBoolFlags()
 	bareArgs := make([]string, 0, 2*len(boolFlags))
@@ -58,14 +62,16 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 			want:     reservedKeyPrefixes,
 			anyOrder: true,
 		},
+		{
+			name:     "privilegedRuntimes holds every runtime with no measured capabilities",
+			variable: "privilegedRuntimes",
+			want:     unmeasuredRuntimes(t),
+			anyOrder: true,
+		},
 	}
 	for _, tc := range lists {
 		t.Run(tc.name, func(t *testing.T) {
-			i := slices.IndexFunc(vap.Spec.Variables, func(v admissionregistrationv1.Variable) bool { return v.Name == tc.variable })
-			if i < 0 {
-				t.Fatalf("%s has no variable %s", grantsPolicyFile, tc.variable)
-			}
-			got, err := celStringList(vap.Spec.Variables[i].Expression)
+			got, err := celStringList(policyVariable(t, vap, tc.variable))
 			if err != nil {
 				t.Fatalf("variable %s: %v", tc.variable, err)
 			}
@@ -97,25 +103,135 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 	}
 
 	t.Run("envNamePattern equals EnvNamePattern", func(t *testing.T) {
-		i := slices.IndexFunc(vap.Spec.Variables, func(v admissionregistrationv1.Variable) bool { return v.Name == "envNamePattern" })
-		if i < 0 {
-			t.Fatalf("%s has no variable envNamePattern", grantsPolicyFile)
-		}
-		if got, want := vap.Spec.Variables[i].Expression, "'"+EnvNamePattern+"'"; got != want {
+		if got, want := policyVariable(t, vap, "envNamePattern"), "'"+EnvNamePattern+"'"; got != want {
 			t.Errorf("variable envNamePattern = %s, want %s", got, want)
 		}
 	})
 	t.Run("the env rule's message holds EnvNamePattern", func(t *testing.T) {
-		i := slices.IndexFunc(vap.Spec.Validations, func(v admissionregistrationv1.Validation) bool {
-			return strings.Contains(v.Expression, "variables.outsideEnv")
-		})
-		if i < 0 {
-			t.Fatalf("%s has no validation of variables.outsideEnv", grantsPolicyFile)
-		}
-		if msg := vap.Spec.Validations[i].Message; !strings.Contains(msg, EnvNamePattern) {
+		if msg := policyValidation(t, vap, "variables.outsideEnv").Message; !strings.Contains(msg, EnvNamePattern) {
 			t.Errorf("%q does not hold %s", msg, EnvNamePattern)
 		}
 	})
+}
+
+// TestPolicyVolumeSources keeps the sources the admission policy allows
+// equal to allowedSource, over every field of VolumeSource, so a source
+// Kubernetes adds is judged by this test the day the dependency moves. The
+// policy's message lists the sources for the tenant, so it is checked too.
+func TestPolicyVolumeSources(t *testing.T) {
+	vap := readPolicy(t)
+	allowed := sets.New[string]()
+	for _, m := range hasSource.FindAllStringSubmatch(policyVariable(t, vap, "deniedVolumes"), -1) {
+		allowed.Insert(m[1])
+	}
+	if allowed.Len() == 0 {
+		t.Fatalf("variable deniedVolumes of %s names no source", grantsPolicyFile)
+	}
+
+	known := sets.New[string]()
+	source := reflect.TypeFor[corev1.VolumeSource]()
+	for i := range source.NumField() {
+		f := source.Field(i)
+		if f.Type.Kind() != reflect.Pointer {
+			t.Fatalf("VolumeSource field %s is a %s, want a pointer", f.Name, f.Type)
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		known.Insert(name)
+		t.Run(name, func(t *testing.T) {
+			var s corev1.VolumeSource
+			reflect.ValueOf(&s).Elem().Field(i).Set(reflect.New(f.Type.Elem()))
+			if got, want := allowedSource(&s), allowed.Has(name); got != want {
+				t.Errorf("allowedSource = %t, the policy allows it = %t", got, want)
+			}
+		})
+	}
+
+	message := policyValidation(t, vap, "variables.deniedVolumes").MessageExpression
+	for _, name := range sets.List(allowed) {
+		t.Run(name+" in the policy", func(t *testing.T) {
+			if !known.Has(name) {
+				t.Errorf("the policy allows %s, which VolumeSource does not have", name)
+			}
+			if !strings.Contains(message, name) {
+				t.Errorf("message %q does not name %s", message, name)
+			}
+		})
+	}
+}
+
+// readPolicy parses the admission policy.
+func readPolicy(t *testing.T) *admissionregistrationv1.ValidatingAdmissionPolicy {
+	t.Helper()
+	raw, err := os.ReadFile(grantsPolicyFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("run from the repository, config/policy/grants_policy.yaml is missing: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	if err := yaml.Unmarshal(raw, vap); err != nil {
+		t.Fatalf("parse %s: %v", grantsPolicyFile, err)
+	}
+	if len(vap.Spec.Validations) == 0 {
+		t.Fatalf("%s has no validations", grantsPolicyFile)
+	}
+	return vap
+}
+
+// policyVariable returns the expression of the policy's variable name.
+func policyVariable(t *testing.T, vap *admissionregistrationv1.ValidatingAdmissionPolicy, name string) string {
+	t.Helper()
+	i := slices.IndexFunc(vap.Spec.Variables, func(v admissionregistrationv1.Variable) bool { return v.Name == name })
+	if i < 0 {
+		t.Fatalf("%s has no variable %s", grantsPolicyFile, name)
+	}
+	return vap.Spec.Variables[i].Expression
+}
+
+// policyValidation returns the validation whose expression reads variable.
+func policyValidation(t *testing.T, vap *admissionregistrationv1.ValidatingAdmissionPolicy, variable string) admissionregistrationv1.Validation {
+	t.Helper()
+	i := slices.IndexFunc(vap.Spec.Validations, func(v admissionregistrationv1.Validation) bool {
+		return strings.Contains(v.Expression, variable)
+	})
+	if i < 0 {
+		t.Fatalf("%s has no validation of %s", grantsPolicyFile, variable)
+	}
+	return vap.Spec.Validations[i]
+}
+
+// unmeasuredRuntimes returns the runtimes of the CapacityGrant schema that
+// measuredCaps has no capability set for. It reads the schema, so a new
+// runtime reaches this test without anyone listing it here.
+func unmeasuredRuntimes(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(grantCRDFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal(raw, &crd); err != nil {
+		t.Fatalf("parse %s: %v", grantCRDFile, err)
+	}
+	if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Schema == nil {
+		t.Fatalf("%s holds %d versions, want one with a schema", grantCRDFile, len(crd.Spec.Versions))
+	}
+	enum := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["runtime"].Enum
+	if len(enum) == 0 {
+		t.Fatalf("%s lists no runtimes", grantCRDFile)
+	}
+	var out []string
+	for _, e := range enum {
+		var rt v1alpha1.Runtime
+		if err := json.Unmarshal(e.Raw, &rt); err != nil {
+			t.Fatalf("runtime %s is not a string: %v", e.Raw, err)
+		}
+		if _, measured := measuredCaps(rt); !measured {
+			out = append(out, string(rt))
+		}
+	}
+	return out
 }
 
 // celStringList parses a CEL list literal of single-quoted strings, the
