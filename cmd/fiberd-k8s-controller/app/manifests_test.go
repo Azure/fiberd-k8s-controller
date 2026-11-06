@@ -1,11 +1,7 @@
 package app
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -17,9 +13,9 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 
+	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
 )
 
@@ -249,33 +245,15 @@ func readDir(t *testing.T, dir string) []*unstructured.Unstructured {
 	if err := yaml.Unmarshal(raw, &k); err != nil {
 		t.Fatalf("parse %s: %v", filepath.Join(dir, "kustomization.yaml"), err)
 	}
-	var objs []*unstructured.Unstructured
+	var paths []string
 	for _, name := range k.Resources {
-		if filepath.Ext(name) != ".yaml" {
-			continue
+		if filepath.Ext(name) == ".yaml" {
+			paths = append(paths, filepath.Join(dir, name))
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		r := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(raw)))
-		for {
-			doc, err := r.Read()
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil {
-				t.Fatalf("read %s: %v", name, err)
-			}
-			u := &unstructured.Unstructured{}
-			if err := yaml.Unmarshal(doc, &u.Object); err != nil {
-				t.Fatalf("parse %s: %v", name, err)
-			}
-			if len(u.Object) == 0 {
-				continue
-			}
-			objs = append(objs, u)
-		}
+	}
+	objs, err := testutil.ReadObjects(paths...)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return objs
 }

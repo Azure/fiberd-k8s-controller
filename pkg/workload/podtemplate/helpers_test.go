@@ -1,6 +1,7 @@
 package podtemplate
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,16 @@ const (
 )
 
 var testDigest = "sha256:" + strings.Repeat("ab", 32)
+
+// sortedNames returns the names of set, sorted.
+func sortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
+}
 
 // testOptions are the fewest Options a grant Pod can be built with.
 func testOptions() Options {

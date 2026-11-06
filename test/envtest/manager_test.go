@@ -32,9 +32,9 @@ import (
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 	"github.com/Azure/fiberd-k8s-controller/cmd/fiberd-k8s-controller/app"
 	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
+	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
-	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
 )
 
 const (

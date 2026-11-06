@@ -40,9 +40,8 @@ var hasSource = regexp.MustCompile(`has\(v\.(\w+)\)`)
 func TestPolicyMatchesBuilder(t *testing.T) {
 	vap := readPolicy(t)
 
-	boolFlags := TenantBoolFlags()
-	bareArgs := make([]string, 0, 2*len(boolFlags))
-	for _, f := range boolFlags {
+	bareArgs := make([]string, 0, 2*len(tenantBoolFlags))
+	for f := range tenantBoolFlags {
 		bareArgs = append(bareArgs, "-"+f, "--"+f)
 	}
 	lists := []struct {
@@ -52,8 +51,8 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 		// anyOrder is set where the policy's list is not sorted.
 		anyOrder bool
 	}{
-		{name: "tenantFlags equals TenantFlags", variable: "tenantFlags", want: TenantFlags()},
-		{name: "bareArgs holds both forms of TenantBoolFlags", variable: "bareArgs", want: bareArgs, anyOrder: true},
+		{name: "tenantFlags equals tenantFlags", variable: "tenantFlags", want: sortedNames(tenantFlags)},
+		{name: "bareArgs holds both forms of tenantBoolFlags", variable: "bareArgs", want: bareArgs, anyOrder: true},
 		{name: "mountRoots equals mountRoots", variable: "mountRoots", want: mountRoots},
 		{name: "ownedVolumes equals ownedVolumes", variable: "ownedVolumes", want: ownedVolumes, anyOrder: true},
 		{

@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
+	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 )
 
 // loadSample returns config/samples' CapacityGrant in the default

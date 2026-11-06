@@ -25,7 +25,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
-	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
+	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 )
 
 // repoRoot is the repository root seen from this package.

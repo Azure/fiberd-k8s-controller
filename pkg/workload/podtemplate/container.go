@@ -27,7 +27,7 @@ const (
 )
 
 // controllerArgs are the fiberd flags the controller sets. Build appends
-// them after the tenant's args. CheckArgs refuses every one of them in the
+// them after the tenant's args. checkArgs refuses every one of them in the
 // tenant's args, -home and the zygote's -template or -registry included. -home=kubernetes comes
 // first and selects the Kubernetes home inside fiberd.
 //

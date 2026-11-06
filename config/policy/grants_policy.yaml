@@ -47,7 +47,7 @@ spec:
       expression: "has(object.spec.zygote.registry) ? object.spec.zygote.registry : ''"
     # The fiberd flags a tenant may set, sorted. Every other flag is the
     # controller's or the operator's. A test keeps the list equal to
-    # podtemplate.TenantFlags(), which says why each is the tenant's.
+    # podtemplate's tenantFlags, which says why each is the tenant's.
     - name: tenantFlags
       expression: |-
         [

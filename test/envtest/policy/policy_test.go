@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
-	"github.com/Azure/fiberd-k8s-controller/test/envtest/internal/testutil"
+	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 )
 
 // testDigest is a well-formed digest, so an image case fails only on the
