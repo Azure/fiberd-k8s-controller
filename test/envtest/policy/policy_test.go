@@ -183,6 +183,20 @@ func setMount(path string) mutation {
 	}
 }
 
+// setDevice attaches a block volume at path, so only the path decides.
+func setDevice(path string) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		testutil.SetPodField(t, u, "volumes", []any{map[string]any{"name": "disk", "persistentVolumeClaim": map[string]any{"claimName": "disk"}}})
+		testutil.SetContainerField(t, u, "volumeDevices", []any{map[string]any{"name": "disk", "devicePath": path}})
+	}
+}
+
+func setTerminationMessagePath(path string) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		testutil.SetContainerField(t, u, "terminationMessagePath", path)
+	}
+}
+
 func setRuntime(runtime string) mutation {
 	return func(t *testing.T, u *unstructured.Unstructured) {
 		if err := unstructured.SetNestedField(u.Object, runtime, "spec", "runtime"); err != nil {
@@ -422,86 +436,236 @@ func TestPolicyRefusals(t *testing.T) {
 			// and would then decide instead of the mount.
 			name: "refuses a mount naming the controller's grants volume",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
-				testutil.SetContainerField(t, u, "volumeMounts", []any{map[string]any{"name": "fiberd-grants", "mountPath": "/grants"}})
+				testutil.SetContainerField(t, u, "volumeMounts", []any{map[string]any{"name": "fiberd-grants", "mountPath": "/data/grants"}})
 			},
 			reason: metav1.StatusReasonForbidden,
 			substr: "volume fiberd-grants is mounted by the controller",
 		},
 		{
-			name:   "refuses a mount under the grants directory",
-			mutate: setMount("/var/run/fiberd/grants"),
-			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /var/run/fiberd/grants is at or under a directory the controller mounts",
+			name:   "admits a mount at the data root",
+			mutate: setMount("/data"),
 		},
 		{
-			name:   "refuses a mount under the state directory",
-			mutate: setMount("/var/lib/fiberd/private"),
-			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /var/lib/fiberd/private is at or under a directory the controller mounts",
+			name:   "admits a mount at the config root",
+			mutate: setMount("/config"),
 		},
 		{
-			name:   "refuses a mount under the /run alias",
-			mutate: setMount("/run/fiberd/grants"),
-			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /run/fiberd/grants is at or under a directory the controller mounts",
+			name:   "admits a mount at the secrets root",
+			mutate: setMount("/secrets"),
 		},
 		{
-			name:   "refuses a mount under the secrets directory",
-			mutate: setMount("/var/run/secrets/fiberd.io/grant"),
+			name:   "admits a mount under the data root",
+			mutate: setMount("/data/cache"),
+		},
+		{
+			name:   "admits a mount under the config root",
+			mutate: setMount("/config/app/settings"),
+		},
+		{
+			name:   "admits a mount under the secrets root",
+			mutate: setMount("/secrets/seal"),
+		},
+		{
+			name:   "admits a name of three dots",
+			mutate: setMount("/data/..."),
+		},
+		{
+			name:   "refuses a mount over the fiberd binary",
+			mutate: setMount("/usr/local/bin/fiberd"),
 			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /var/run/secrets/fiberd.io/grant is at or under a directory the controller mounts",
+			substr: "mount path /usr/local/bin/fiberd " + outsideMessage,
+		},
+		{
+			name:   "refuses a mount over the fiberd binary's directory",
+			mutate: setMount("/usr/local/bin"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /usr/local/bin " + outsideMessage,
+		},
+		{
+			name:   "refuses a mount over a system library directory",
+			mutate: setMount("/usr/lib"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /usr/lib " + outsideMessage,
+		},
+		{
+			name:   "refuses a mount at the loader preload file",
+			mutate: setMount("/etc/ld.so.preload"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /etc/ld.so.preload " + outsideMessage,
 		},
 		{
 			name:   "refuses a mount over the system trust roots",
 			mutate: setMount("/etc/ssl/certs"),
 			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /etc/ssl/certs would replace the trust roots or the resolver files",
-		},
-		{
-			name:   "refuses a mount above the system trust roots",
-			mutate: setMount("/etc"),
-			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /etc would replace the trust roots or the resolver files",
+			substr: "mount path /etc/ssl/certs " + outsideMessage,
 		},
 		{
 			name:   "refuses a mount at the resolver file",
 			mutate: setMount("/etc/resolv.conf"),
 			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /etc/resolv.conf would replace the trust roots or the resolver files",
+			substr: "mount path /etc/resolv.conf " + outsideMessage,
 		},
 		{
-			name:   "refuses a mount at the root",
+			name:   "refuses a mount at the state directory",
+			mutate: setMount("/var/lib/fiberd"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /var/lib/fiberd " + outsideMessage,
+		},
+		{
+			name:   "refuses a mount at the grants directory",
+			mutate: setMount("/var/run/fiberd/grants"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /var/run/fiberd/grants " + outsideMessage,
+		},
+		{
+			name:   "refuses a mount at the grant token directory",
+			mutate: setMount("/var/run/secrets/fiberd.io/grant"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /var/run/secrets/fiberd.io/grant " + outsideMessage,
+		},
+		{
+			name:   "refuses a mount at the helper directory",
+			mutate: setMount("/var/run/fiberd/helper"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /var/run/fiberd/helper " + outsideMessage,
+		},
+		{
+			name:   "refuses a mount at the filesystem root",
 			mutate: setMount("/"),
 			reason: metav1.StatusReasonForbidden,
-			substr: "mount path / would replace the trust roots or the resolver files",
+			substr: "mount path / " + outsideMessage,
 		},
 		{
-			name:   "admits a mount beside the trust roots",
-			mutate: setMount("/etc/fiberd"),
+			name:   "refuses a look-alike of the data root",
+			mutate: setMount("/database"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /database " + outsideMessage,
 		},
 		{
-			name:   "admits a mount beside an owned directory",
-			mutate: setMount("/var/run/fiberdx"),
+			name:   "refuses a look-alike of the secrets root",
+			mutate: setMount("/secrets-old/key"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /secrets-old/key " + outsideMessage,
 		},
 		{
-			name:   "refuses a mount path with a double slash",
-			mutate: setMount("/var/run//fiberd"),
+			name:   "refuses another case of a root",
+			mutate: setMount("/Data"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /Data " + outsideMessage,
+		},
+		{
+			name:   "refuses a trailing slash outside the roots",
+			mutate: setMount("/etc/"),
 			reason: metav1.StatusReasonInvalid,
-			substr: "mount path /var/run//fiberd is not a clean absolute path",
+			substr: "mount path /etc/ " + uncleanMessage,
+		},
+		{
+			name:   "refuses a trailing slash on a root",
+			mutate: setMount("/data/"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/ " + uncleanMessage,
+		},
+		{
+			name:   "refuses a parent segment out of a root",
+			mutate: setMount("/data/../etc"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/../etc " + uncleanMessage,
+		},
+		{
+			name:   "refuses a parent segment that stays in a root",
+			mutate: setMount("/data/a/../b"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/a/../b " + uncleanMessage,
+		},
+		{
+			name:   "refuses a final parent segment",
+			mutate: setMount("/data/.."),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/.. " + uncleanMessage,
+		},
+		{
+			name:   "refuses a dot segment",
+			mutate: setMount("/data/./cache"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/./cache " + uncleanMessage,
+		},
+		{
+			name:   "refuses a final dot segment",
+			mutate: setMount("/data/."),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/. " + uncleanMessage,
+		},
+		{
+			name:   "refuses an empty segment",
+			mutate: setMount("/data//cache"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data//cache " + uncleanMessage,
+		},
+		{
+			name:   "refuses a leading double slash",
+			mutate: setMount("//data"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path //data " + uncleanMessage,
 		},
 		{
 			name:   "refuses a relative mount path",
-			mutate: setMount("var/lib/fiberd"),
+			mutate: setMount("data/cache"),
 			reason: metav1.StatusReasonInvalid,
-			substr: "mount path var/lib/fiberd is not a clean absolute path",
+			substr: "mount path data/cache " + uncleanMessage,
 		},
 		{
-			name: "refuses a termination message path under the state directory",
-			mutate: func(t *testing.T, u *unstructured.Unstructured) {
-				testutil.SetContainerField(t, u, "terminationMessagePath", "/var/lib/fiberd/private/x")
-			},
+			name:   "refuses a relative root",
+			mutate: setMount("data"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path data " + uncleanMessage,
+		},
+		{
+			name:   "refuses a leading dot",
+			mutate: setMount("./data"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path ./data " + uncleanMessage,
+		},
+		{
+			name:   "refuses an empty mount path",
+			mutate: setMount(""),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path  " + uncleanMessage,
+		},
+		{
+			name:   "refuses a device outside the roots",
+			mutate: setDevice("/dev/sda"),
 			reason: metav1.StatusReasonForbidden,
-			substr: "mount path /var/lib/fiberd/private/x is at or under a directory the controller mounts",
+			substr: "mount path /dev/sda " + outsideMessage,
+		},
+		{
+			name:   "refuses a device path with a parent segment",
+			mutate: setDevice("/data/../dev/sda"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/../dev/sda " + uncleanMessage,
+		},
+		{
+			name:   "admits a device under a root",
+			mutate: setDevice("/data/disk"),
+		},
+		{
+			name:   "refuses a termination message path outside the roots",
+			mutate: setTerminationMessagePath("/var/lib/fiberd/log"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "mount path /var/lib/fiberd/log " + outsideMessage,
+		},
+		{
+			name:   "refuses a termination message path with a dot segment",
+			mutate: setTerminationMessagePath("/data/./log"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "mount path /data/./log " + uncleanMessage,
+		},
+		{
+			name:   "admits a termination message path under a root",
+			mutate: setTerminationMessagePath("/data/log"),
+		},
+		{
+			name:   "admits an empty termination message path",
+			mutate: setTerminationMessagePath(""),
 		},
 		{
 			name:   "refuses a privileged container in an unlisted namespace",

@@ -150,6 +150,14 @@ var (
 // policy's ownedVolumes.
 var ownedVolumes = []string{stateVolume, grantsVolume, tlsVolume, grantTokenVolume, helperVolume, sealKeyVolume}
 
+// mountRoots are the only directories a tenant may mount in, for config
+// files, data volumes and Secrets. fiberd's images ship nothing there and the
+// overlay mounts nothing there, so a tenant mount replaces nothing fiberd runs
+// or trusts. They are allowed rather than the system paths refused, since a
+// list of refused paths stays open for any path it misses. A test keeps them
+// equal to the policy's mountRoots.
+var mountRoots = []string{"/config", "/data", "/secrets"}
+
 // reservedKeyPrefixes start the template label and annotation keys a tenant
 // may not set. fiberd.io keys are the controller's. The AppArmor and seccomp
 // annotations would conflict with the fields the controller sets. The rest
@@ -478,15 +486,10 @@ func caEnv() corev1.EnvVar {
 }
 
 // checkVolumes refuses tenant volumes, mounts and devices that collide
-// with the overlay's volumes, or that replace the system trust roots and
-// resolver files. A tenant mount of an overlay volume would expose
-// fiberd's keys, grants, certificate or token elsewhere. A tenant mount at or
-// under an overlay directory would replace part of what fiberd keeps
-// there. The trust roots decide which issuer fiberd believes and the
-// resolver files where its name points, and nothing of the controller's
-// is mounted beneath them, so a mount above them replaces them too. A
-// projected token is minted for the grant ServiceAccount, and fibers
-// could read it at a tenant path.
+// with the overlay's volumes, or that sit outside mountRoots. A tenant
+// mount of an overlay volume would expose fiberd's keys, grants, certificate
+// or token elsewhere. A projected token is minted for the grant
+// ServiceAccount, and fibers could read it at a tenant path.
 func checkVolumes(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 	var errs field.ErrorList
 	for i, v := range spec.Volumes {
@@ -524,21 +527,17 @@ func checkVolumes(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 	return errs
 }
 
-// checkMountPath refuses a relative mount path, one at or under an overlay
-// directory, or one at, under or above a trust path. The later checks
-// compare absolute paths, so a relative one stops here.
+// checkMountPath refuses a path that is not clean or not at or under one of
+// mountRoots. The policy cannot clean a path, so the path is refused rather
+// than cleaned, and the two judge every spelling alike.
 func checkMountPath(fld *field.Path, p string) field.ErrorList {
-	if !strings.HasPrefix(p, "/") {
-		return field.ErrorList{field.Invalid(fld, p, "must be an absolute path")}
+	if !strings.HasPrefix(p, "/") || path.Clean(p) != p {
+		return field.ErrorList{field.Invalid(fld, p, "must be a clean absolute path")}
 	}
-	var errs field.ErrorList
-	if dir, ok := ownedDir(p); ok {
-		errs = append(errs, field.Forbidden(fld, "must not be at or under "+dir))
+	if !slices.ContainsFunc(mountRoots, func(r string) bool { return p == r || strings.HasPrefix(p, r+"/") }) {
+		return field.ErrorList{field.Forbidden(fld, "must be at or under "+strings.Join(mountRoots, ", "))}
 	}
-	if t, ok := trustPath(p); ok {
-		errs = append(errs, field.Forbidden(fld, "must not be at, under or above "+t+", which decides which issuer fiberd trusts"))
-	}
-	return errs
+	return nil
 }
 
 // isOwnedVolume reports whether name is one of the overlay's volumes.
@@ -553,40 +552,6 @@ func allowedSource(s *corev1.VolumeSource) bool {
 
 // projectsToken reports whether p is a service account token projection.
 func projectsToken(p corev1.VolumeProjection) bool { return p.ServiceAccountToken != nil }
-
-// ownedDirs are the directories the controller mounts under. That is
-// fiberd's state directory, the directories this and later changes mount
-// under /var/run/fiberd and /var/run/secrets/fiberd.io, and their /run
-// aliases, since /var/run is a symlink in fiberd's image. A test keeps
-// them equal to the policy's ownedDirs.
-var ownedDirs = []string{stateDir, "/var/run/fiberd", "/run/fiberd", "/var/run/secrets/fiberd.io", "/run/secrets/fiberd.io"}
-
-// ownedDir returns the overlay directory that p is at or under.
-func ownedDir(p string) (string, bool) {
-	p = path.Clean(p)
-	for _, dir := range ownedDirs {
-		if p == dir || strings.HasPrefix(p, dir+"/") {
-			return dir, true
-		}
-	}
-	return "", false
-}
-
-// trustPaths hold the system trust roots Go scans beside SSL_CERT_FILE and
-// the files the resolver reads. A test keeps them equal to the policy's
-// trustPaths.
-var trustPaths = []string{"/etc/ssl", "/etc/pki", "/etc/hosts", "/etc/resolv.conf"}
-
-// trustPath returns the trust path that p is at, under or above.
-func trustPath(p string) (string, bool) {
-	p = path.Clean(p)
-	for _, t := range trustPaths {
-		if p == "/" || p == t || strings.HasPrefix(p, t+"/") || strings.HasPrefix(t, p+"/") {
-			return t, true
-		}
-	}
-	return "", false
-}
 
 // addVolumes adds fiberd's state directory, the in-memory directory the
 // home reads grants from, the tls volume, the token the home fetches its

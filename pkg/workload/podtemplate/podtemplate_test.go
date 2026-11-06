@@ -328,23 +328,9 @@ func TestBuildVolumes(t *testing.T) {
 		{
 			name:        "tenant volumes come first",
 			volumes:     []corev1.Volume{tenantVolume},
-			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}},
+			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/data/cache"}},
 			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol, tokenVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/cache"}, stateMount, grantsMount, tlsMount, tokenMount},
-		},
-		{
-			name:        "a mount above fiberd's directories is allowed",
-			volumes:     []corev1.Volume{tenantVolume},
-			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol, tokenVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib"}, stateMount, grantsMount, tlsMount, tokenMount},
-		},
-		{
-			name:        "a sibling path with the same prefix is allowed",
-			volumes:     []corev1.Volume{tenantVolume},
-			mounts:      []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}},
-			wantVolumes: []corev1.Volume{tenantVolume, stateVol, grantsVol, tlsVol, tokenVol},
-			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd-cache"}, stateMount, grantsMount, tlsMount, tokenMount},
+			wantMounts:  []corev1.VolumeMount{{Name: "cache", MountPath: "/data/cache"}, stateMount, grantsMount, tlsMount, tokenMount},
 		},
 		{
 			name:        "a registry zygote without a seal key adds no volume",
@@ -374,6 +360,139 @@ func TestBuildVolumes(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantMounts, spec.Containers[0].VolumeMounts); diff != "" {
 				t.Errorf("volumeMounts mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestBuildMountPaths runs every path through each field that takes one, since
+// they share one rule. The policy's envtest table repeats these paths. An
+// empty path is the unset termination message path, so it has its own rows in
+// TestBuildErrors.
+func TestBuildMountPaths(t *testing.T) {
+	const (
+		unclean = "must be a clean absolute path"
+		outside = "Forbidden: must be at or under /config, /data, /secrets"
+	)
+	fields := []struct {
+		name string
+		set  func(c *corev1.Container, p string)
+	}{
+		{
+			name: "volumeMounts[0].mountPath",
+			set: func(c *corev1.Container, p string) {
+				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: p}}
+			},
+		},
+		{
+			name: "volumeDevices[0].devicePath",
+			set: func(c *corev1.Container, p string) {
+				c.VolumeDevices = []corev1.VolumeDevice{{Name: "disk", DevicePath: p}}
+			},
+		},
+		{
+			name: "terminationMessagePath",
+			set:  func(c *corev1.Container, p string) { c.TerminationMessagePath = p },
+		},
+	}
+	cases := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "the data root", path: "/data"},
+		{name: "the config root", path: "/config"},
+		{name: "the secrets root", path: "/secrets"},
+		{name: "under the data root", path: "/data/cache"},
+		{name: "under the config root", path: "/config/app/settings"},
+		{name: "under the secrets root", path: "/secrets/seal"},
+		{name: "a name of three dots", path: "/data/..."},
+		{name: "the fiberd binary", path: "/usr/local/bin/fiberd", wantErr: outside},
+		{name: "the fiberd binary's directory", path: "/usr/local/bin", wantErr: outside},
+		{name: "a system library directory", path: "/usr/lib", wantErr: outside},
+		{name: "the loader preload file", path: "/etc/ld.so.preload", wantErr: outside},
+		{name: "the system trust roots", path: "/etc/ssl/certs", wantErr: outside},
+		{name: "the resolver file", path: "/etc/resolv.conf", wantErr: outside},
+		{name: "the state directory", path: "/var/lib/fiberd", wantErr: outside},
+		{name: "the grants directory", path: "/var/run/fiberd/grants", wantErr: outside},
+		{name: "the grant token directory", path: "/var/run/secrets/fiberd.io/grant", wantErr: outside},
+		{name: "the helper directory", path: "/var/run/fiberd/helper", wantErr: outside},
+		{name: "the filesystem root", path: "/", wantErr: outside},
+		{name: "a look-alike of the data root", path: "/database", wantErr: outside},
+		{name: "a look-alike of the secrets root", path: "/secrets-old/key", wantErr: outside},
+		{name: "another case of a root", path: "/Data", wantErr: outside},
+		{name: "a trailing slash outside the roots", path: "/etc/", wantErr: unclean},
+		{name: "a trailing slash on a root", path: "/data/", wantErr: unclean},
+		{name: "a parent segment out of a root", path: "/data/../etc", wantErr: unclean},
+		{name: "a parent segment that stays in a root", path: "/data/a/../b", wantErr: unclean},
+		{name: "a final parent segment", path: "/data/..", wantErr: unclean},
+		{name: "a dot segment", path: "/data/./cache", wantErr: unclean},
+		{name: "a final dot segment", path: "/data/.", wantErr: unclean},
+		{name: "an empty segment", path: "/data//cache", wantErr: unclean},
+		{name: "a leading double slash", path: "//data", wantErr: unclean},
+		{name: "a relative path", path: "data/cache", wantErr: unclean},
+		{name: "a relative root", path: "data", wantErr: unclean},
+		{name: "a leading dot", path: "./data", wantErr: unclean},
+	}
+	for _, f := range fields {
+		for _, tc := range cases {
+			t.Run(f.name+"/"+tc.name, func(t *testing.T) {
+				cg := testGrant(func(cg *v1alpha1.CapacityGrant) { f.set(container(cg), tc.path) })
+				_, err := Build(cg, testImage, testServiceName, testOptions())
+				if tc.wantErr == "" {
+					if err != nil {
+						t.Fatalf("Build: %v", err)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("Build succeeded, want an error holding %q", tc.wantErr)
+				}
+				for _, want := range []string{f.name, tc.wantErr} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("Build error = %q, want it to hold %q", err, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestBuildOverlayAvoidsMountRoots ties the overlay to the tenant's rules.
+// Every volume it adds carries a name a tenant may not use, and no mount of it
+// is at, under or above a root, where a tenant mount could replace it or hide it.
+func TestBuildOverlayAvoidsMountRoots(t *testing.T) {
+	cases := []struct {
+		name    string
+		runtime v1alpha1.Runtime
+	}{
+		{name: "proc", runtime: v1alpha1.RuntimeProc},
+		{name: "runc", runtime: v1alpha1.RuntimeRunc},
+		{name: "gvisor", runtime: v1alpha1.RuntimeGvisor},
+		{name: "hyperlight", runtime: v1alpha1.RuntimeHyperlight},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) { setRuntime(cg, tc.runtime) })
+			spec := mustBuild(t, cg, testOptions()).Spec
+			for _, v := range spec.Volumes {
+				if !isOwnedVolume(v.Name) {
+					t.Errorf("overlay volume %s is not in ownedVolumes", v.Name)
+				}
+			}
+			mounts := spec.Containers[0].VolumeMounts
+			for _, c := range spec.InitContainers {
+				mounts = append(mounts, c.VolumeMounts...)
+			}
+			for _, m := range mounts {
+				if !isOwnedVolume(m.Name) {
+					t.Errorf("overlay mount %s names a volume outside ownedVolumes", m.Name)
+				}
+				for _, r := range mountRoots {
+					if m.MountPath == r || strings.HasPrefix(m.MountPath, r+"/") || strings.HasPrefix(r, m.MountPath+"/") {
+						t.Errorf("overlay mount %s at %s collides with the mount root %s", m.Name, m.MountPath, r)
+					}
+				}
 			}
 		})
 	}
@@ -741,44 +860,19 @@ func TestBuildErrors(t *testing.T) {
 		{
 			name: "mount of the grants volume elsewhere",
 			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "fiberd-grants", MountPath: "/leak"}}
+				c.VolumeMounts = []corev1.VolumeMount{{Name: "fiberd-grants", MountPath: "/data/leak"}}
 			}),
 			wantErr: "spec.podTemplate.spec.containers[0].volumeMounts[0].name",
 		},
 		{
-			name: "mount at the state path",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd"}}
-			}),
-			wantErr: "spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath",
+			name:    "empty mount path",
+			mod:     ctrMod(func(c *corev1.Container) { c.VolumeMounts = []corev1.VolumeMount{{Name: "cache"}} }),
+			wantErr: "volumeMounts[0].mountPath: Invalid value",
 		},
 		{
-			name: "mount at the state path with a trailing slash",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/fiberd/"}}
-			}),
-			wantErr: "spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath",
-		},
-		{
-			name: "mount under the grants path",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/var/run/fiberd/grants/x"}}
-			}),
-			wantErr: "spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath",
-		},
-		{
-			name: "mount over the grant token path",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/var/run/secrets/fiberd.io/grant"}}
-			}),
-			wantErr: "spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath",
-		},
-		{
-			name: "device under the state path",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeDevices = []corev1.VolumeDevice{{Name: "disk", DevicePath: "/var/lib/fiberd/dev"}}
-			}),
-			wantErr: "spec.podTemplate.spec.containers[0].volumeDevices[0].devicePath",
+			name:    "empty device path",
+			mod:     ctrMod(func(c *corev1.Container) { c.VolumeDevices = []corev1.VolumeDevice{{Name: "disk"}} }),
+			wantErr: "volumeDevices[0].devicePath: Invalid value",
 		},
 		{
 			name:    "env POD_NAME",
@@ -799,44 +893,6 @@ func TestBuildErrors(t *testing.T) {
 			name:    "env GODEBUG",
 			mod:     ctrMod(func(c *corev1.Container) { c.Env = []corev1.EnvVar{{Name: "GODEBUG", Value: "x"}} }),
 			wantErr: "env[0].name: Forbidden: GODEBUG " + loaderWhy,
-		},
-		{
-			name: "mount over the trust roots",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/etc/ssl/certs"}}
-			}),
-			wantErr: "volumeMounts[0].mountPath: Forbidden: must not be at, under or above /etc/ssl",
-		},
-		{
-			name: "mount above the trust roots",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/etc"}}
-			}),
-			wantErr: "volumeMounts[0].mountPath: Forbidden: must not be at, under or above /etc/ssl",
-		},
-		{
-			name: "mount at the resolver file",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "/etc/resolv.conf"}}
-			}),
-			wantErr: "volumeMounts[0].mountPath: Forbidden: must not be at, under or above /etc/resolv.conf",
-		},
-		{
-			name: "relative mount path",
-			mod: ctrMod(func(c *corev1.Container) {
-				c.VolumeMounts = []corev1.VolumeMount{{Name: "cache", MountPath: "var/cache"}}
-			}),
-			wantErr: `volumeMounts[0].mountPath: Invalid value: "var/cache": must be an absolute path`,
-		},
-		{
-			name:    "termination message path under the state path",
-			mod:     ctrMod(func(c *corev1.Container) { c.TerminationMessagePath = "/var/lib/fiberd/log" }),
-			wantErr: "containers[0].terminationMessagePath: Forbidden: must not be at or under /var/lib/fiberd",
-		},
-		{
-			name:    "termination message path at the resolver file",
-			mod:     ctrMod(func(c *corev1.Container) { c.TerminationMessagePath = "/etc/resolv.conf" }),
-			wantErr: "containers[0].terminationMessagePath: Forbidden: must not be at, under or above /etc/resolv.conf",
 		},
 		{
 			name: "reserved label under fiberd.io",

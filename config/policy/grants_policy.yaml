@@ -74,23 +74,23 @@ spec:
     - name: volumes
       expression: "has(object.spec.podTemplate.spec.volumes) ? object.spec.podTemplate.spec.volumes : []"
     # The kubelet bind-mounts a node file at terminationMessagePath, so it
-    # is a mount like any other.
+    # is a mount like any other. Empty means unset, as it does to the builder.
     - name: mountPaths
       expression: |-
         (has(variables.container.volumeMounts) ? variables.container.volumeMounts.map(m, m.mountPath) : [])
         + (has(variables.container.volumeDevices) ? variables.container.volumeDevices.map(d, d.devicePath) : [])
-        + (has(variables.container.terminationMessagePath) ? [variables.container.terminationMessagePath] : [])
-    # The builder's state and grants directories, the directories later
-    # changes mount under /var/run/fiberd and /var/run/secrets/fiberd.io,
-    # and their /run aliases, since /var/run is a symlink in fiberd's image.
-    - name: ownedDirs
-      expression: "['/var/lib/fiberd', '/var/run/fiberd', '/run/fiberd', '/var/run/secrets/fiberd.io', '/run/secrets/fiberd.io']"
-    # The system trust roots decide which issuer fiberd believes, and the
-    # resolver files decide where the issuer's name points. Nothing of the
-    # controller's is mounted beneath them, so a mount above them replaces
-    # them as surely as a mount at them.
-    - name: trustPaths
-      expression: "['/etc/ssl', '/etc/pki', '/etc/hosts', '/etc/resolv.conf']"
+        + ((has(variables.container.terminationMessagePath) && variables.container.terminationMessagePath != '') ? [variables.container.terminationMessagePath] : [])
+    # The only directories a tenant may mount in. A test keeps the list equal
+    # to podtemplate's mountRoots, which says why it is a list of allowed
+    # directories.
+    - name: mountRoots
+      expression: "['/config', '/data', '/secrets']"
+    # CEL cannot clean a path, so a path that is not already clean is refused.
+    # The test is the builder's path.Clean(p) != p, spelled out.
+    - name: uncleanPaths
+      expression: "variables.mountPaths.filter(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..') || (p != '/' && p.endsWith('/')))"
+    - name: outsidePaths
+      expression: "variables.mountPaths.filter(p, !variables.mountRoots.exists(r, p == r || p.startsWith(r + '/')))"
     # A mount naming an overlay volume would expose fiberd's keys, grants,
     # certificate or token at a path fibers can see.
     - name: ownedVolumes
@@ -179,19 +179,13 @@ spec:
       messageExpression: "'volume ' + variables.volumeNames.filter(n, n in variables.ownedVolumes)[0] + ' is mounted by the controller'"
       message: "the volumes fiberd-state, fiberd-grants, fiberd-tls, fiberd-grant-token, fiberd-helper and fiberd-seal-key are mounted by the controller"
       reason: Forbidden
-    # Unclean or relative paths would slip past the owned directory check.
-    - expression: "!variables.mountPaths.exists(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..'))"
-      messageExpression: "'mount path ' + variables.mountPaths.filter(p, !p.startsWith('/') || p.contains('//') || p.contains('/./') || p.contains('/../') || p.endsWith('/.') || p.endsWith('/..'))[0] + ' is not a clean absolute path'"
+    - expression: "variables.uncleanPaths.size() == 0"
+      messageExpression: "'mount path ' + variables.uncleanPaths[0] + ' is not a clean absolute path'"
       message: "mountPath, devicePath and terminationMessagePath must be clean absolute paths"
       reason: Invalid
-    # The builder's ownedDir semantics, so /var/run/fiberdx is fine.
-    - expression: "!variables.mountPaths.exists(p, variables.ownedDirs.exists(d, p == d || p.startsWith(d + '/')))"
-      messageExpression: "'mount path ' + variables.mountPaths.filter(p, variables.ownedDirs.exists(d, p == d || p.startsWith(d + '/')))[0] + ' is at or under a directory the controller mounts'"
-      message: "no mountPath, devicePath or terminationMessagePath may be at or under a directory the controller mounts, such as /var/lib/fiberd or /var/run/fiberd"
-      reason: Forbidden
-    - expression: "!variables.mountPaths.exists(p, p == '/' || variables.trustPaths.exists(t, p == t || p.startsWith(t + '/') || t.startsWith(p + '/')))"
-      messageExpression: "'mount path ' + variables.mountPaths.filter(p, p == '/' || variables.trustPaths.exists(t, p == t || p.startsWith(t + '/') || t.startsWith(p + '/')))[0] + ' would replace the trust roots or the resolver files'"
-      message: "no mountPath, devicePath or terminationMessagePath may be at, under or above /etc/ssl, /etc/pki, /etc/hosts or /etc/resolv.conf"
+    - expression: "variables.outsidePaths.size() == 0"
+      messageExpression: "'mount path ' + variables.outsidePaths[0] + ' must be at or under ' + variables.mountRoots.join(', ')"
+      message: "a mountPath, devicePath or terminationMessagePath is outside the directories a tenant may mount in"
       reason: Forbidden
     - expression: "!(variables.privileged || (has(object.spec.runtime) && object.spec.runtime in variables.privilegedRuntimes)) || (has(params.spec.privilegedNamespaces) && object.metadata.namespace in params.spec.privilegedNamespaces)"
       message: "a privileged fiberd container, which the gvisor and hyperlight runtimes need, is allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"

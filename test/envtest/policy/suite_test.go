@@ -60,6 +60,8 @@ const (
 	imageListMessage   = "is not under a repository listed"
 	privilegedMessage  = "is allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
 	deleteGuardMessage = "update it instead of deleting it"
+	uncleanMessage     = "is not a clean absolute path"
+	outsideMessage     = "must be at or under /config, /data, /secrets"
 
 	// paramNotFoundMessage is the stable part of the API server's refusal
 	// when a binding's parameterNotFoundAction is Deny and the parameter is
