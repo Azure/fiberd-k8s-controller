@@ -30,11 +30,11 @@ const (
 	// markers on spec.images and spec.helperImages hold the same pattern, and a test checks it.
 	ImageRepositoryPattern = `^` + repositoryBody + `$`
 
-	// RegistryPattern is the form of spec.zygote.registry, a repository with an optional
-	// http:// scheme, as fiberd's -registry takes it. A bare repository already means TLS, so
-	// https:// would only give a repository a second spelling. fiberd appends @<digest>, so a
-	// tag or digest never belongs here. The CRD marker holds the same pattern, and a test
-	// checks it.
+	// RegistryPattern is the form of spec.zygote.registry and of a GrantPolicy registries entry,
+	// a repository with an optional http:// scheme, as fiberd's -registry takes it. A bare
+	// repository already means TLS, so https:// would only give a repository a second spelling.
+	// fiberd appends @<digest>, so a tag or digest never belongs here. The CRD markers hold the
+	// same pattern, and a test checks it.
 	RegistryPattern = `^(http://)?` + repositoryBody + `$`
 
 	// SealKeySecretKey is the data key of the Secret spec.zygote.sealKeySecretName names. It

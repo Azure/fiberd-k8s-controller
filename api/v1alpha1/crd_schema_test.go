@@ -355,6 +355,23 @@ func TestGrantPolicySchema(t *testing.T) {
 			maxLength: ptr(int64(255)),
 		},
 		{
+			name:     "registries is a set",
+			path:     "spec.registries",
+			listType: "set",
+		},
+		{
+			name:     "registries has between one and 64 items",
+			path:     "spec.registries",
+			minItems: ptr(int64(1)),
+			maxItems: ptr(int64(64)),
+		},
+		{
+			name:      "registries items take the form of a zygote registry",
+			path:      "spec.registries.[]",
+			pattern:   v1alpha1.RegistryPattern,
+			maxLength: ptr(int64(255)),
+		},
+		{
 			name:     "privilegedNamespaces is a set",
 			path:     "spec.privilegedNamespaces",
 			listType: "set",

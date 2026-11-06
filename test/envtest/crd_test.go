@@ -260,6 +260,11 @@ func TestCRDValidation(t *testing.T) {
 			wantErr: "spec.zygote.registry",
 		},
 		{
+			name:    "a registry with an https scheme",
+			mutate:  setZygote(map[string]any{"registry": "https://ghcr.io/team-a/zygotes"}),
+			wantErr: "spec.zygote.registry",
+		},
+		{
 			name:    "a name longer than 56 characters",
 			mutate:  func(_ *testing.T, u *unstructured.Unstructured) { u.SetName(strings.Repeat("a", 57)) },
 			wantErr: "the name is at most 56 characters",

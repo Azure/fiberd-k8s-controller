@@ -199,6 +199,11 @@ func (in *GrantPolicySpec) DeepCopyInto(out *GrantPolicySpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.Registries != nil {
+		in, out := &in.Registries, &out.Registries
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.PrivilegedNamespaces != nil {
 		in, out := &in.PrivilegedNamespaces, &out.PrivilegedNamespaces
 		*out = make([]string, len(*in))

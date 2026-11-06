@@ -214,6 +214,17 @@ func setRuntime(runtime string) mutation {
 	}
 }
 
+// setRegistry turns the zygote from a command into a registry pull, so the CRD
+// rule of exactly one passes and only the policy decides.
+func setRegistry(registry string) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		unstructured.RemoveNestedField(u.Object, "spec", "zygote", "command")
+		if err := unstructured.SetNestedField(u.Object, registry, "spec", "zygote", "registry"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // setHelperImage asks for runtime hyperlight with image as its helper, so
 // the CRD rules on helperImage pass and only the policy decides.
 func setHelperImage(image string) mutation {
@@ -325,6 +336,12 @@ func TestPolicyRefusals(t *testing.T) {
 			mutate: setImage("ghcr.io/azure/fiberd-evil@" + testDigest),
 			reason: metav1.StatusReasonForbidden,
 			substr: "image ghcr.io/azure/fiberd-evil@" + testDigest + " " + imageListMessage,
+		},
+		{
+			name:   "refuses a registry zygote while spec.registries is unset",
+			mutate: setRegistry("registry.example/team-a"),
+			reason: metav1.StatusReasonForbidden,
+			substr: "registry registry.example/team-a " + imageListMessage + " in GrantPolicy default spec.registries",
 		},
 		{
 			name:   "admits a listed image by digest without a tag",
@@ -857,6 +874,55 @@ func TestPolicyHelperImage(t *testing.T) {
 	}
 }
 
+// TestPolicyRegistry lists one TLS repository and one plain HTTP repository,
+// so a registry passes only by matching an entry as written, scheme included.
+func TestPolicyRegistry(t *testing.T) {
+	const (
+		tlsRepo  = "registry.example/team-a"
+		httpHost = "registry.local:5000/zygotes"
+		httpRepo = "http://" + httpHost
+	)
+	registryListMessage := imageListMessage + " in GrantPolicy default spec.registries"
+	ns := namespace(t)
+	listed := readSample(t, ns)
+	setRegistry(tlsRepo)(t, listed)
+
+	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
+		s.Registries = []string{tlsRepo, httpRepo}
+	}, refused(listed, metav1.StatusReasonForbidden, "registry "+tlsRepo+" "+registryListMessage))
+	testutil.Eventually(t, "a listed registry to be admitted in "+ns, accepted(listed))
+
+	cases := []struct {
+		name     string
+		registry string
+		refused  bool
+	}{
+		{name: "admits a listed repository", registry: tlsRepo},
+		{name: "admits a repository under a listed one", registry: tlsRepo + "/zygotes"},
+		{name: "admits a listed plain HTTP repository", registry: httpRepo},
+		{name: "admits a repository under a listed plain HTTP one", registry: httpRepo + "/team-a"},
+		{name: "refuses an unlisted repository", registry: "registry.example/team-b", refused: true},
+		{name: "refuses a repository that only starts with a listed one", registry: tlsRepo + "-evil", refused: true},
+		{name: "refuses plain HTTP to a repository listed for TLS", registry: "http://" + tlsRepo, refused: true},
+		{name: "refuses TLS to a repository listed for plain HTTP", registry: httpHost, refused: true},
+		{name: "refuses a plain HTTP repository that only starts with a listed one", registry: httpRepo + "-evil", refused: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u := readSample(t, ns)
+			setRegistry(tc.registry)(t, u)
+			err := dryRunCreate(t.Context(), u)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("create: %v, want it admitted", err)
+				}
+				return
+			}
+			expectDenied(t, err, metav1.StatusReasonForbidden, "registry "+tc.registry+" "+registryListMessage)
+		})
+	}
+}
+
 // TestPolicyUnchangedSpecUpdate tightens GrantPolicy default under a stored
 // grant. A metadata-only update must still pass, since the controller
 // removes its finalizer that way, and a spec change must not.
@@ -977,6 +1043,24 @@ func TestGrantPolicySchema(t *testing.T) {
 			mutate:  setGrantPolicyList("helperImages", "ghcr.io/azure/fiberd-helper:0.4.0"),
 			stored:  true,
 			substrs: []string{"spec.helperImages", "should match"},
+		},
+		{
+			name:    "refuses an empty registries list",
+			mutate:  setGrantPolicyList("registries"),
+			stored:  true,
+			substrs: []string{"spec.registries", "should have at least 1 items"},
+		},
+		{
+			name:    "refuses a registries entry that is a host alone",
+			mutate:  setGrantPolicyList("registries", "registry.example"),
+			stored:  true,
+			substrs: []string{"spec.registries", "should match"},
+		},
+		{
+			name:    "refuses a registries entry with an https scheme",
+			mutate:  setGrantPolicyList("registries", "https://registry.example/team-a"),
+			stored:  true,
+			substrs: []string{"spec.registries", "should match"},
 		},
 		{
 			name:    "refuses an empty runtimes list",
