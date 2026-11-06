@@ -55,10 +55,6 @@ type Options struct {
 	// default is 500m.
 	DefaultCPU resource.Quantity
 
-	// Plaintext adds -insecure-plaintext. It stays true until mutual TLS
-	// lands.
-	Plaintext bool
-
 	// ServiceAccount is the grant Pod's service account. The default is
 	// fiberd-grant.
 	ServiceAccount string

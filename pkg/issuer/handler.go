@@ -58,6 +58,7 @@ const (
 	reasonPodTerminating   = "PodTerminating"
 	reasonGrantDeleting    = "GrantDeleting"
 	reasonSuperseded       = "Superseded"
+	reasonUnboundGrant     = "UnboundGrant"
 	reasonBodyTooLarge     = "BodyTooLarge"
 	reasonInvalidSpec      = "InvalidSpec"
 	reasonRateLimited      = "RateLimited"

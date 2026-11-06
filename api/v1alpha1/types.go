@@ -44,9 +44,11 @@ type CapacityGrantSpec struct {
 	WriteBudget *resource.Quantity `json:"writeBudget,omitempty"`
 
 	// callerThumbprint is the RFC 7638 thumbprint of the public key in the one client
-	// certificate allowed to present the grant. A home serving mutual TLS refuses a grant
-	// without it.
-	// +optional
+	// certificate allowed to present the grant, the base64url SHA-256 of the key's canonical
+	// JWK without padding, which fiberd carries as the grant's cnf jkt. A renewed certificate
+	// over the same key keeps it. A grant Pod serves mutual TLS only and refuses a grant bound
+	// to no caller, so a grant needs one.
+	// +required
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-]{43}$`
 	CallerThumbprint string `json:"callerThumbprint,omitempty"`
 

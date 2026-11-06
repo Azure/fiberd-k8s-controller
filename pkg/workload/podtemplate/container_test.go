@@ -33,6 +33,9 @@ func wantProcArgs() []string {
 		"-grant-token-file=/var/run/secrets/fiberd.io/grant/token",
 		"-grant-fetch-timeout=1m0s",
 		"-endpoint-family=inet4",
+		"-tls-cert=/var/run/fiberd/tls/tls.crt",
+		"-tls-key=/var/run/fiberd/tls/tls.key",
+		"-client-ca=/var/run/fiberd/tls/ca.crt",
 		"-template=" + testDigest + "=/app/zygote --port=8080",
 	}
 }
@@ -79,17 +82,6 @@ func TestBuildArgs(t *testing.T) {
 			name: "hyperlight adds its helper",
 			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { setRuntime(cg, v1alpha1.RuntimeHyperlight) }},
 			want: append(withArg(wantProcArgs(), "-runtime=", "-runtime=hyperlight"), "-hyperlight-helper=/var/run/fiberd/helper/helper"),
-		},
-		{
-			name: "plaintext comes last",
-			opts: func(o *Options) { o.Plaintext = true },
-			want: append(wantProcArgs(), "-insecure-plaintext"),
-		},
-		{
-			name: "runc with plaintext",
-			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc }},
-			opts: func(o *Options) { o.Plaintext = true },
-			want: append(withArg(wantProcArgs(), "-runtime=", "-runtime=runc"), "-runc-rootfs=/usr/share/fiberd/rootfs", "-insecure-plaintext"),
 		},
 		{
 			name: "options reach their flags",
@@ -200,20 +192,18 @@ func expand(s string, env map[string]string) string {
 // Config.Bind.
 func TestBuildArgsParseInFiberd(t *testing.T) {
 	cases := []struct {
-		name          string
-		runtime       v1alpha1.Runtime
-		command       []string
-		tenantArgs    []string
-		plaintext     bool
-		wantRuntime   string
-		wantRunc      string
-		wantGvisor    string
-		wantHelper    string
-		wantGuest     string
-		wantTemplate  string
-		wantRegistry  string
-		wantDeltas    string
-		wantPlaintext bool
+		name         string
+		runtime      v1alpha1.Runtime
+		command      []string
+		tenantArgs   []string
+		wantRuntime  string
+		wantRunc     string
+		wantGvisor   string
+		wantHelper   string
+		wantGuest    string
+		wantTemplate string
+		wantRegistry string
+		wantDeltas   string
 		// registry and sealKey replace the command with a registry zygote.
 		registry    string
 		sealKey     string
@@ -244,16 +234,14 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 			wantTemplate: "/app/zygote",
 		},
 		{
-			name:          "hyperlight with its guest and plaintext",
-			runtime:       v1alpha1.RuntimeHyperlight,
-			command:       []string{"/app/zygote"},
-			tenantArgs:    []string{"-hyperlight-guest=/var/run/fiberd/helper/guest"},
-			plaintext:     true,
-			wantRuntime:   "hyperlight",
-			wantHelper:    "/var/run/fiberd/helper/helper",
-			wantGuest:     "/var/run/fiberd/helper/guest",
-			wantTemplate:  "/app/zygote",
-			wantPlaintext: true,
+			name:         "hyperlight with its guest",
+			runtime:      v1alpha1.RuntimeHyperlight,
+			command:      []string{"/app/zygote"},
+			tenantArgs:   []string{"-hyperlight-guest=/var/run/fiberd/helper/guest"},
+			wantRuntime:  "hyperlight",
+			wantHelper:   "/var/run/fiberd/helper/helper",
+			wantGuest:    "/var/run/fiberd/helper/guest",
+			wantTemplate: "/app/zygote",
 		},
 		{
 			name:         "tenant flag and a literal dollar survive",
@@ -292,9 +280,7 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 				cg.Spec.Zygote.SealKeySecretName = tc.sealKey
 				container(cg).Args = tc.tenantArgs
 			})
-			opts := testOptions()
-			opts.Plaintext = tc.plaintext
-			tmpl := mustBuild(t, cg, opts)
+			tmpl := mustBuild(t, cg, testOptions())
 
 			env := map[string]string{"POD_NAME": "fiberd-web-7d9f8c6b5-x2k4p", "HOME": "/root"}
 			var args []string
@@ -340,7 +326,10 @@ func TestBuildArgsParseInFiberd(t *testing.T) {
 				{"delta-registry", cfg.Registry.Deltas, tc.wantDeltas},
 				{"delta-seal-key", cfg.Registry.Keys.Seal, tc.wantSealKey},
 				{"fiber-hide", strings.Join(cfg.Runtime.FiberHide, ","), tc.wantHide},
-				{"insecure-plaintext", cfg.API.TLS.InsecurePlaintext, tc.wantPlaintext},
+				{"tls-cert", cfg.API.TLS.Cert, "/var/run/fiberd/tls/tls.crt"},
+				{"tls-key", cfg.API.TLS.Key, "/var/run/fiberd/tls/tls.key"},
+				{"client-ca", cfg.API.TLS.ClientCA, "/var/run/fiberd/tls/ca.crt"},
+				{"insecure-plaintext", cfg.API.TLS.InsecurePlaintext, false},
 			}
 			for _, c := range checks {
 				if c.got != c.want {

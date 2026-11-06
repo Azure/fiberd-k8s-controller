@@ -34,9 +34,10 @@ type PodIdentity struct {
 // GrantFromSpec maps fields and leaves the rules a grant must follow to
 // core.Grant.Validate, so the controller and every other issuer refuse the
 // same grants. It checks only what the mapping itself needs. Those checks
-// cover a CapacityGrant, a namespace and a runtime that are set, a Pod
-// name to use as the audience, a fiber max of at least one, a write budget
-// that is a whole number of bytes, and a positive lease of whole seconds.
+// cover a CapacityGrant, a namespace, a caller thumbprint and a runtime
+// that are set, a Pod name to use as the audience, a fiber max of at least
+// one, a write budget that is a whole number of bytes, and a positive
+// lease of whole seconds.
 // When the grant cannot be built, GrantFromSpec returns the zero grant and
 // an error that names the CapacityGrant.
 //
@@ -61,6 +62,12 @@ func GrantFromSpec(cg *v1alpha1.CapacityGrant, pod PodIdentity, now time.Time, l
 	// must never reach fiberd.
 	if spec.Fibers.Max < 1 {
 		errs = append(errs, field.Invalid(specPath.Child("fibers", "max"), spec.Fibers.Max, "must be at least 1"))
+	}
+	// A grant Pod serves mutual TLS only, and fiberd there refuses every
+	// grant bound to no caller. The CRD requires the field, but an object
+	// stored before the CRD required it can still lack it.
+	if spec.CallerThumbprint == "" {
+		errs = append(errs, field.Required(specPath.Child("callerThumbprint"), "a grant Pod serves mutual TLS only and refuses a grant bound to no caller"))
 	}
 	writeBudget, budgetErrs := budgetBytes(specPath.Child("writeBudget"), spec.WriteBudget)
 	errs = append(errs, budgetErrs...)

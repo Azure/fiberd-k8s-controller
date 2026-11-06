@@ -31,6 +31,11 @@ const (
 // tenant's args, -home and the zygote's -template or -registry included. -home=kubernetes comes
 // first and selects the Kubernetes home inside fiberd.
 //
+// fiberd serves mutual TLS only, from the tls volume. Its client CA is the
+// fiberd CA, so a caller needs a client certificate from fiberd-ca, and
+// fiberd refuses every grant bound to no caller. There is no plaintext
+// mode.
+//
 // The grant fetch sets no -grant-ca-file. It trusts the same root pool as
 // the key set fetch, which SSL_CERT_FILE points at the fiberd CA, so the two
 // cannot disagree.
@@ -53,6 +58,9 @@ func controllerArgs(rt v1alpha1.Runtime, zygoteArgs []string, opts Options) []st
 		"-grant-token-file=" + grantTokenFile,
 		"-grant-fetch-timeout=" + grantFetchTimeout.String(),
 		"-endpoint-family=" + string(opts.EndpointFamily),
+		"-tls-cert=" + certFile,
+		"-tls-key=" + keyFile,
+		"-client-ca=" + caFile,
 	}
 	args = append(args, zygoteArgs...)
 	switch rt {
@@ -62,9 +70,6 @@ func controllerArgs(rt v1alpha1.Runtime, zygoteArgs []string, opts Options) []st
 		args = append(args, "-gvisor-rootfs="+rootfsDir)
 	case v1alpha1.RuntimeHyperlight:
 		args = append(args, "-hyperlight-helper="+helperFile)
-	}
-	if opts.Plaintext {
-		args = append(args, "-insecure-plaintext")
 	}
 	return args
 }

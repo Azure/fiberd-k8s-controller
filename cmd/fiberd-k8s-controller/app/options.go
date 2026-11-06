@@ -94,7 +94,6 @@ func NewOptions() *Options {
 			StaleTTL:       podtemplate.DefaultStaleTTL,
 			EndpointFamily: podtemplate.DefaultEndpointFamily,
 			DefaultCPU:     resource.MustParse(podtemplate.DefaultPodCPU),
-			Plaintext:      true,
 			ServiceAccount: podtemplate.DefaultServiceAccount,
 		},
 		Namespace:   os.Getenv(envPodNamespace),
@@ -122,8 +121,6 @@ func (o *Options) AddFlags(fs *flag.FlagSet) {
 		"Every grant Pod runs fiberd with this -endpoint-family. It is one of unix, inet4 or inet6.")
 	fs.Var((*quantityValue)(&o.Template.DefaultCPU), "default-pod-cpu",
 		"A grant Pod whose template sets no CPU gets this CPU limit.")
-	fs.BoolVar(&o.Template.Plaintext, "insecure-plaintext", o.Template.Plaintext,
-		"Serve fiberd's Fibers API without TLS. It is on by default, since grant Pods do not serve mutual TLS yet.")
 	fs.StringVar(&o.Template.ServiceAccount, "grant-service-account", o.Template.ServiceAccount,
 		"Every grant Pod runs as this service account.")
 	fs.StringVar(&o.Namespace, "namespace", o.Namespace,

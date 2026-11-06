@@ -281,6 +281,21 @@ func TestCRDValidation(t *testing.T) {
 			wantErr: "spec.zygote.registry",
 		},
 		{
+			name: "no caller thumbprint",
+			mutate: func(_ *testing.T, u *unstructured.Unstructured) {
+				unstructured.RemoveNestedField(u.Object, "spec", "callerThumbprint")
+			},
+			wantErr: "spec.callerThumbprint: Required value",
+		},
+		{
+			// RFC 7638 thumbprints are base64url without padding.
+			name: "a padded caller thumbprint",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "callerThumbprint", "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs=")
+			},
+			wantErr: "spec.callerThumbprint",
+		},
+		{
 			name:    "a name longer than 56 characters",
 			mutate:  func(_ *testing.T, u *unstructured.Unstructured) { u.SetName(strings.Repeat("a", 57)) },
 			wantErr: "the name is at most 56 characters",

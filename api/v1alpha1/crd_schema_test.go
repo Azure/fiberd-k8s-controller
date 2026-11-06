@@ -181,9 +181,9 @@ func TestCapacityGrantSchema(t *testing.T) {
 			rules: []string{nameRule},
 		},
 		{
-			name:     "spec requires zygote fibers and podTemplate",
+			name:     "spec requires zygote fibers callerThumbprint and podTemplate",
 			path:     "spec",
-			required: []string{"zygote", "fibers", "podTemplate"},
+			required: []string{"zygote", "fibers", "callerThumbprint", "podTemplate"},
 		},
 		{
 			name:               "spec carries the runtime rules",

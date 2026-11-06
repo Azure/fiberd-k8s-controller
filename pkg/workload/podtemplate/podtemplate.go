@@ -61,6 +61,8 @@ const (
 	tlsVolume       = "fiberd-tls"
 	tlsDir          = "/var/run/fiberd/tls"
 	caFile          = tlsDir + "/ca.crt"
+	certFile        = tlsDir + "/tls.crt"
+	keyFile         = tlsDir + "/tls.key"
 
 	grantTokenVolume = "fiberd-grant-token"
 	grantTokenDir    = "/var/run/secrets/fiberd.io/grant"
@@ -544,9 +546,9 @@ func projectsToken(p corev1.VolumeProjection) bool { return p.ServiceAccountToke
 
 // addVolumes adds fiberd's state directory, the in-memory directory the
 // home reads grants from, the tls volume, the token the home fetches its
-// grant with and, when the zygote names one, the seal key Secret. Grants
-// are bearer tokens until mutual TLS binds them, so they never touch the
-// node's disk.
+// grant with and, when the zygote names one, the seal key Secret. A grant is
+// worthless without its caller's key, and it still never touches the node's
+// disk.
 func addVolumes(spec *corev1.PodSpec, cg *v1alpha1.CapacityGrant, serviceName, issuerURL string) {
 	spec.Volumes = append(spec.Volumes,
 		corev1.Volume{Name: stateVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -580,7 +582,8 @@ func grantToken(issuerURL string) corev1.Volume {
 }
 
 // tlsCSIVolume asks the csi-driver for a certificate that names the grant's
-// Service. fiberd reads only its ca.crt until it serves TLS.
+// Service. fiberd serves mutual TLS with its tls.crt and tls.key, trusts its
+// ca.crt for callers and reads the issuer's key set through it too.
 func tlsCSIVolume(cg *v1alpha1.CapacityGrant, serviceName string) corev1.Volume {
 	host := serviceName + "." + cg.Namespace + ".svc"
 	return corev1.Volume{Name: tlsVolume, VolumeSource: corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{

@@ -56,7 +56,6 @@ func defaults(ns string) Options {
 			StaleTTL:       podtemplate.DefaultStaleTTL,
 			EndpointFamily: podtemplate.DefaultEndpointFamily,
 			DefaultCPU:     resource.MustParse("500m"),
-			Plaintext:      true,
 			ServiceAccount: podtemplate.DefaultServiceAccount,
 		},
 		Namespace:   ns,
@@ -112,7 +111,6 @@ func TestAddFlags(t *testing.T) {
 				"--stale-ttl=1m",
 				"--endpoint-family=inet6",
 				"--default-pod-cpu=2",
-				"--insecure-plaintext=false",
 				"--grant-service-account=grant-pods",
 				"--namespace=controllers",
 				"--leader-elect=false",
@@ -151,6 +149,13 @@ func TestAddFlags(t *testing.T) {
 				o.Template.EndpointFamily = endpoint.Unix
 				return o
 			},
+		},
+		{
+			// Grant Pods serve mutual TLS only, so there is no switch to
+			// turn it off.
+			name:    "there is no plaintext flag",
+			args:    withRequired("--insecure-plaintext"),
+			wantErr: "flag provided but not defined: -insecure-plaintext",
 		},
 		{
 			name:    "an unknown endpoint family is refused",
