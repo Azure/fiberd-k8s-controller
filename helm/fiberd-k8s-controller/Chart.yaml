@@ -1,0 +1,6 @@
+apiVersion: v2
+name: fiberd-k8s-controller
+description: The fiberd Kubernetes controller, its CRDs, RBAC, certificates and admission policies.
+type: application
+version: 0.1.0
+home: https://github.com/Azure/fiberd-k8s-controller

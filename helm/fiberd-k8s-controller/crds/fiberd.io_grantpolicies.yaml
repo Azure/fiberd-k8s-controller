@@ -1,0 +1,136 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: grantpolicies.fiberd.io
+spec:
+  group: fiberd.io
+  names:
+    kind: GrantPolicy
+    listKind: GrantPolicyList
+    plural: grantpolicies
+    singular: grantpolicy
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GrantPolicy is the cluster's policy for CapacityGrants. The fiberd-grants
+          admission policy reads the one named default and refuses a grant that
+          breaks it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec is the desired policy.
+            properties:
+              helperImages:
+                description: |-
+                  helperImages lists the repositories the helperImage of a hyperlight grant may come
+                  from, matched as images entries are, and a helperImage must also carry a digest. It is
+                  a list of its own because the helper runs under fiberd with far less than the fiberd
+                  container holds, so a repository trusted for helpers does not qualify as a fiberd
+                  image. While it is unset no hyperlight grant is admitted.
+                items:
+                  maxLength: 255
+                  pattern: ^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$
+                  type: string
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              images:
+                description: |-
+                  images lists the repositories the fiberd container image may come from, each fully
+                  qualified such as ghcr.io/azure/fiberd. An entry matches an image that equals it or
+                  continues with /, : or @, so ghcr.io/azure/fiberd matches
+                  ghcr.io/azure/fiberd:0.4.0@sha256:... and not ghcr.io/azure/fiberd-runc. Every image
+                  must also carry a digest. A helperImage is not checked against this list.
+                items:
+                  maxLength: 255
+                  pattern: ^(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$
+                  type: string
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              privilegedNamespaces:
+                description: |-
+                  privilegedNamespaces are the namespaces whose grants may set securityContext.privileged
+                  on the fiberd container, or ask for the gvisor or hyperlight runtime, which run
+                  privileged until their capability sets are measured.
+                items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 256
+                type: array
+                x-kubernetes-list-type: set
+              registries:
+                description: |-
+                  registries lists the repositories a registry zygote may come from, spelled as
+                  spec.zygote.registry spells them, such as ghcr.io/team-a or
+                  http://registry.local:5000/zygotes. An entry matches a registry that equals it or
+                  continues with /, so ghcr.io/team-a matches ghcr.io/team-a/zygotes and not
+                  ghcr.io/team-a-tools. The scheme is compared too, so plain HTTP passes only under an
+                  entry that spells http://. A registry zygote is code this policy never sees, so while
+                  the list is unset no registry grant is admitted.
+                items:
+                  maxLength: 255
+                  pattern: ^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$
+                  type: string
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              runtimes:
+                default:
+                - proc
+                - runc
+                description: |-
+                  runtimes are the fiberd runtimes a grant may ask for. gvisor and hyperlight also need the
+                  grant's namespace in privilegedNamespaces.
+                items:
+                  description: |-
+                    Runtime is the fiberd backend that runs the fibers of a grant.
+                    The values are the names fiberd's -runtime flag takes.
+                  enum:
+                  - proc
+                  - runc
+                  - gvisor
+                  - hyperlight
+                  type: string
+                maxItems: 4
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+            required:
+            - images
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: the fiberd-grants binding reads only the GrantPolicy named default
+          reason: FieldValueInvalid
+          rule: self.metadata.name == 'default'
+    served: true
+    storage: true
