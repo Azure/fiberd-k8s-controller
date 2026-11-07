@@ -297,6 +297,9 @@ func checkShape(fld *field.Path, spec *corev1.PodSpec) field.ErrorList {
 			errs = append(errs, field.Forbidden(cPath.Child("envFrom"), "a source's key names are unknown at admission"))
 		}
 		if sc := c.SecurityContext; sc != nil {
+			if ptr.Deref(sc.Privileged, false) {
+				errs = append(errs, field.Forbidden(cPath.Child("securityContext", "privileged"), "nothing runs privileged"))
+			}
 			errs = append(errs, checkUnconfined(cPath.Child("securityContext"), sc.SELinuxOptions != nil, sc.WindowsOptions != nil)...)
 		}
 	}

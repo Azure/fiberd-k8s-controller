@@ -83,13 +83,17 @@ const (
 	envNameMessage     = "must match ^FIBERD_TENANT_[A-Z0-9_]+$"
 	volumeMessage      = "is not an emptyDir, configMap"
 	imageListMessage   = "is not under a repository listed"
-	privilegedMessage  = "is allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
+	privilegedMessage  = "are allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
 	deleteGuardMessage = "update it instead of deleting it"
 	uncleanMessage     = "is not a clean absolute path"
 	outsideMessage     = "must be at or under /config, /data, /secrets"
 
 	// registryListMessage is how the spec.registries rule ends its refusal.
 	registryListMessage = imageListMessage + " in GrantPolicy default spec.registries"
+
+	// privilegedFieldMessage is cut from the CRD rule on podTemplate. The API
+	// server runs that rule before any admission policy, in every namespace.
+	privilegedFieldMessage = "podTemplate.spec.containers[0].securityContext.privileged is not allowed"
 
 	// paramNotFoundMessage is the stable part of the API server's refusal
 	// when a binding's parameterNotFoundAction is Deny and the parameter is

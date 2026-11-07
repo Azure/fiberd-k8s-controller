@@ -107,24 +107,10 @@ func TestBuildSecurityContext(t *testing.T) {
 			want:    unprivileged(capUnion(hyperlight, caps.Engine)),
 		},
 		{
-			name:    "a tenant privileged proc Pod stays privileged",
+			name:    "a tenant's privileged false stays false",
 			runtime: v1alpha1.RuntimeProc,
-			tenant:  &corev1.SecurityContext{Privileged: ptr.To(true)},
-			want: &corev1.SecurityContext{
-				Privileged:      ptr.To(true),
-				SeccompProfile:  unconfinedSeccomp,
-				AppArmorProfile: unconfinedAppArmor,
-			},
-		},
-		{
-			name:    "a tenant privileged gvisor Pod stays privileged without tenant capabilities",
-			runtime: v1alpha1.RuntimeGvisor,
-			tenant:  &corev1.SecurityContext{Privileged: ptr.To(true), Capabilities: netRaw},
-			want: &corev1.SecurityContext{
-				Privileged:      ptr.To(true),
-				SeccompProfile:  unconfinedSeccomp,
-				AppArmorProfile: unconfinedAppArmor,
-			},
+			tenant:  &corev1.SecurityContext{Privileged: ptr.To(false)},
+			want:    unprivileged(caps.Proc),
 		},
 		{
 			name:    "tenant capabilities and profiles are replaced on proc",
@@ -204,21 +190,10 @@ func TestBuildSecurityContext(t *testing.T) {
 }
 
 // TestUnmeasuredRuntimeIsAnError keeps a runtime fiberd has not measured
-// from becoming a Pod, even for a tenant that sets privileged.
+// from becoming a Pod.
 func TestUnmeasuredRuntimeIsAnError(t *testing.T) {
-	cases := []struct {
-		name   string
-		tenant *corev1.SecurityContext
-	}{
-		{name: "no tenant context"},
-		{name: "tenant privileged", tenant: &corev1.SecurityContext{Privileged: ptr.To(true)}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if sc, err := securityContext(tc.tenant, "unmeasured", nil); err == nil {
-				t.Errorf("securityContext = %v, want an error", sc)
-			}
-		})
+	if sc, err := securityContext(nil, "unmeasured", nil); err == nil {
+		t.Errorf("securityContext = %v, want an error", sc)
 	}
 }
 

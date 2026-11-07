@@ -150,6 +150,7 @@ var podTemplateRules = []string{
 	"!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].envFrom)",
 	"!has(self.spec) || (!has(self.spec.hostAliases) && !has(self.spec.dnsConfig) && !has(self.spec.runtimeClassName))",
 	"!has(self.spec) || ((!has(self.spec.securityContext) || (!has(self.spec.securityContext.seLinuxOptions) && !has(self.spec.securityContext.windowsOptions))) && (self.spec.containers.size() == 0 || !has(self.spec.containers[0].securityContext) || (!has(self.spec.containers[0].securityContext.seLinuxOptions) && !has(self.spec.containers[0].securityContext.windowsOptions))))",
+	"!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].securityContext) || !has(self.spec.containers[0].securityContext.privileged) || !self.spec.containers[0].securityContext.privileged",
 }
 
 // specRules are the CEL rules on spec, in marker order.

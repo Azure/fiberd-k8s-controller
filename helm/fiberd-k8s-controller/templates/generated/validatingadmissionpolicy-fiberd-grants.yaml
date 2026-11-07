@@ -116,11 +116,10 @@ spec:
     messageExpression: '''mount path '' + variables.outsidePaths[0] + '' must be at
       or under '' + variables.mountRoots.join('', '')'
     reason: Forbidden
-  - expression: '!(variables.privileged || (has(object.spec.runtime) && object.spec.runtime
-      in variables.privilegedRuntimes)) || (has(params.spec.privilegedNamespaces)
-      && object.metadata.namespace in params.spec.privilegedNamespaces)'
-    message: a privileged fiberd container, which the gvisor and hyperlight runtimes
-      need, is allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces
+  - expression: '!(has(object.spec.runtime) && object.spec.runtime in variables.privilegedRuntimes)
+      || (has(params.spec.privilegedNamespaces) && object.metadata.namespace in params.spec.privilegedNamespaces)'
+    message: the gvisor and hyperlight runtimes are allowed only in a namespace listed
+      in GrantPolicy default spec.privilegedNamespaces
     reason: Forbidden
   - expression: has(object.spec.runtime) && object.spec.runtime in variables.runtimes
     message: spec.runtime must be listed in GrantPolicy default spec.runtimes
@@ -209,9 +208,6 @@ spec:
       ''k8s.v1.cni.cncf.io/'', ''cni.projectcalico.org/'', ''io.kubernetes.cri-o.'',
       ''dev.gvisor.'', ''io.katacontainers.'']'
     name: reservedKeyPrefixes
-  - expression: has(variables.container.securityContext) && has(variables.container.securityContext.privileged)
-      && variables.container.securityContext.privileged
-    name: privileged
   - expression: '[''gvisor'', ''hyperlight'']'
     name: privilegedRuntimes
   - expression: 'has(params.spec.runtimes) ? params.spec.runtimes : []'

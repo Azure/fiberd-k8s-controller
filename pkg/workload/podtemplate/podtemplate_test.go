@@ -717,6 +717,12 @@ func TestBuildErrors(t *testing.T) {
 			container(cg).Resources = r
 		}
 	}
+	privilegedOn := func(rt v1alpha1.Runtime) grantMod {
+		return func(cg *v1alpha1.CapacityGrant) {
+			setRuntime(cg, rt)
+			container(cg).SecurityContext = &corev1.SecurityContext{Privileged: ptr.To(true)}
+		}
+	}
 	nameDevice := func(o *Options) { o.HyperlightDeviceResource = "example.com/kvm" }
 	// Two rows share it, so each proves one of the two errors is reported.
 	deviceNoMemory := hyperlightMod(corev1.ResourceRequirements{Limits: corev1.ResourceList{"example.com/kvm": resource.MustParse("1")}})
@@ -728,6 +734,7 @@ func TestBuildErrors(t *testing.T) {
 	})
 	const envWhy = "must match " + EnvNamePattern
 	const sourceWhy = "Forbidden: must be an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume"
+	const privilegedWhy = "spec.podTemplate.spec.containers[0].securityContext.privileged: Forbidden: nothing runs privileged"
 	tenantProbe := &corev1.Probe{
 		ProbeHandler:  corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromInt32(9090)}},
 		PeriodSeconds: 7,
@@ -908,6 +915,10 @@ func TestBuildErrors(t *testing.T) {
 			}),
 			wantErr: "spec.podTemplate.spec.containers[0].securityContext.windowsOptions",
 		},
+		{name: "privileged on proc", mod: privilegedOn(v1alpha1.RuntimeProc), wantErr: privilegedWhy},
+		{name: "privileged on runc", mod: privilegedOn(v1alpha1.RuntimeRunc), wantErr: privilegedWhy},
+		{name: "privileged on gvisor", mod: privilegedOn(v1alpha1.RuntimeGvisor), wantErr: privilegedWhy},
+		{name: "privileged on hyperlight", mod: privilegedOn(v1alpha1.RuntimeHyperlight), wantErr: privilegedWhy},
 		{
 			name:    "init containers",
 			mod:     podMod(func(s *corev1.PodSpec) { s.InitContainers = []corev1.Container{{Name: "init"}} }),

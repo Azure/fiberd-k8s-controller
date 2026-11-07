@@ -21,16 +21,14 @@ var hyperlightStartCaps = []int{caps.SysAdmin, caps.SetPCAP}
 // securityContext returns the fiberd container's security context for the
 // runtime and the container's args, starting from the tenant's.
 //
-// Every runtime runs unprivileged. It drops every capability and adds back
-// the set fiberd measured for it. Hyperlight also holds what fiberd needs
-// before it narrows, and args that set an engine add caps.Engine.
+// The controller always sets privileged to false. Every runtime drops every
+// capability and adds back the set fiberd measured for it. Hyperlight also
+// holds what fiberd needs before it narrows, and args that set an engine add
+// caps.Engine.
 //
 // Every runtime's seccomp and AppArmor profiles are Unconfined. CRIU on proc
 // and runc cannot dump from under a filter, and fiberd remounts cgroupfs and
 // sysctls on every runtime, which the default AppArmor profile denies.
-//
-// A tenant that sets privileged gets a privileged Pod on any runtime.
-// Admission policy decides who may, not the builder.
 //
 // The fields above are the controller's. allowPrivilegeEscalation=false
 // is dropped too, because the API server refuses it beside privileged or
@@ -49,12 +47,8 @@ func securityContext(tenant *corev1.SecurityContext, rt v1alpha1.Runtime, args [
 	if err != nil {
 		return nil, err
 	}
-	if sc.Privileged != nil && *sc.Privileged {
-		sc.Capabilities = nil
-	} else {
-		sc.Privileged = ptr.To(false)
-		sc.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: add}
-	}
+	sc.Privileged = ptr.To(false)
+	sc.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: add}
 	sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
 	sc.AppArmorProfile = &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
 	if sc.AllowPrivilegeEscalation != nil && !*sc.AllowPrivilegeEscalation {
@@ -65,7 +59,7 @@ func securityContext(tenant *corev1.SecurityContext, rt v1alpha1.Runtime, args [
 
 // addedCaps is the capability set a Pod of rt adds back, which may hold
 // repeats. A runtime fiberd has not measured is an error, so it never
-// becomes a privileged Pod.
+// becomes a Pod.
 func addedCaps(rt v1alpha1.Runtime, engine bool) ([]int, error) {
 	added, measured := caps.ForRuntime(string(rt))
 	if !measured {
