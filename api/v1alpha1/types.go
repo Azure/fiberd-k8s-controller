@@ -128,7 +128,7 @@ type ZygoteSpec struct {
 	// is the value of fiberd's -registry flag. GrantPolicy spec.registries must list it, and
 	// fiberd pulls anonymously, so the repository must be public. On runtime hyperlight the
 	// artifact is a sealed Hyperlight snapshot that the helper restores, which needs
-	// sealKeySecretName, a helper that advertises template-dir, and fiberd with Azure/fiberd#101.
+	// sealKeySecretName and a helper that advertises template-dir.
 	// +optional
 	// +kubebuilder:validation:MaxLength=255
 	// +kubebuilder:validation:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
