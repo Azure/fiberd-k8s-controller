@@ -16,10 +16,11 @@ var specCheckPod = PodIdentity{
 }
 
 // ValidateSpec reports whether every Pod of cg could be given a grant. It
-// maps cg as GrantFromSpec does, for a stand-in Pod, so it refuses exactly
-// the specs GrantFromSpec and fiberd core refuse. now and lease are as for
-// GrantFromSpec. cg is never modified.
+// maps cg as GrantFromSpec does, for a stand-in Pod and with no exception,
+// since trust changes what a grant carries and not what a spec may be. So it
+// refuses exactly the specs GrantFromSpec and fiberd core refuse. now and
+// lease are as for GrantFromSpec. cg is never modified.
 func ValidateSpec(cg *v1alpha1.CapacityGrant, now time.Time, lease time.Duration) error {
-	_, err := GrantFromSpec(cg, specCheckPod, now, lease)
+	_, err := GrantFromSpec(cg, specCheckPod, false, now, lease)
 	return err
 }

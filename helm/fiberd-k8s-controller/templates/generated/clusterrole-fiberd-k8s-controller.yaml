@@ -7,6 +7,12 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
   - pods
   - services
   verbs:
@@ -55,3 +61,9 @@ rules:
   - capacitygrants/status
   verbs:
   - patch
+- apiGroups:
+  - fiberd.io
+  resources:
+  - grantpolicies
+  verbs:
+  - get

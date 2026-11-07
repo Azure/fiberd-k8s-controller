@@ -19,7 +19,7 @@ These decisions are closed. State them as facts. A change to one changes this pa
 ## GrantPolicy
 
 - `GrantPolicy` is one cluster-scoped object named `default`. There is no policy object per namespace.
-- The API server reads it through the admission policy. The controller never reads it.
+- The API server reads it through the admission policy. The issuer reads it to decide trust, and nothing else in the controller reads it.
 - Every admission list an operator keeps lives there. These are `images`, `helperImages`, `runtimes`, `defaultRuntimes` and `registries`.
 - `runtimes` is the ceiling, and no namespace passes it. `defaultRuntimes` is what a namespace with no label may use, and it holds only `gvisor` and `hyperlight`.
 - A namespace label `runtimes.fiberd.io/<runtime>: "true"` adds one runtime as an exception, if the ceiling holds it.
@@ -47,5 +47,6 @@ The admission policy and the builder both hold the flag, env and mount rules, an
 - proc and runc need an Unconfined seccomp profile, because CRIU cannot dump from under a filter ([fiberd's design](https://github.com/Azure/fiberd/blob/main/docs/design/kubernetes.md)).
 - Capabilities per runtime come from fiberd core's measured sets. The [security table](controller.md#security) says what each runtime runs with.
 - A controller flag can name the hypervisor device's extended resource. When it does, the builder adds one to every hyperlight Pod and a tenant may not write that resource there.
-- No code is trusted on any runtime.
+- No code is trusted on any runtime by default. A namespace carries an exception only because an operator labelled it.
+- fiberd runs proc and runc only under a grant signed `TRUSTED`. The issuer signs that only when the namespace carries the exception for the runtime and the ceiling holds it, checked at every grant it signs. It signs everything else `UNTRUSTED`.
 - Egress is required.

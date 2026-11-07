@@ -84,18 +84,35 @@ func (f fakeReviewer) Review(context.Context, string) (authenticationv1.TokenRev
 	return f.status, f.err
 }
 
-// lineage is one grant Pod and the objects above it. A nil object is left
-// out of the API.
+// lineage is one grant Pod, the objects above it, and the Namespace and
+// GrantPolicy that decide its trust. A nil object is left out of the API.
 type lineage struct {
 	grant      *v1alpha1.CapacityGrant
 	deployment *appsv1.Deployment
 	replicaSet *appsv1.ReplicaSet
 	pod        *corev1.Pod
+	namespace  *corev1.Namespace
+	policy     *v1alpha1.GrantPolicy
+}
+
+// exceptionFor is the Namespace and the GrantPolicy that give podNamespace
+// the exception for rt.
+func exceptionFor(rt v1alpha1.Runtime) (*corev1.Namespace, *v1alpha1.GrantPolicy) {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   podNamespace,
+		Labels: map[string]string{v1alpha1.RuntimeLabel(rt): v1alpha1.LabelRuntimeValue},
+	}}
+	policy := &v1alpha1.GrantPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.GrantPolicyName},
+		Spec:       v1alpha1.GrantPolicySpec{Runtimes: []v1alpha1.Runtime{rt}},
+	}
+	return ns, policy
 }
 
 // newLineage is a whole chain from the grant to the Pod acceptedStatus
 // binds, as the reconciler and the Deployment controller would have built
-// it. spec edits the grant before the Pod is stamped with its hash.
+// it, in a namespace that holds the exception for the grant's runtime. spec
+// edits the grant before the Pod is stamped with its hash.
 func newLineage(t *testing.T, spec func(*v1alpha1.CapacityGrant)) *lineage {
 	t.Helper()
 	cg := &v1alpha1.CapacityGrant{
@@ -142,7 +159,8 @@ func newLineage(t *testing.T, spec func(*v1alpha1.CapacityGrant)) *lineage {
 		},
 		Spec: corev1.PodSpec{ServiceAccountName: testServiceAccount},
 	}
-	return &lineage{grant: cg, deployment: d, replicaSet: rs, pod: pod}
+	ns, policy := exceptionFor(cg.Spec.Runtime)
+	return &lineage{grant: cg, deployment: d, replicaSet: rs, pod: pod, namespace: ns, policy: policy}
 }
 
 // hashOf is the hash the reconciler stamps on cg's Pods.
@@ -169,6 +187,12 @@ func (l *lineage) objects() []client.Object {
 	}
 	if l.pod != nil {
 		objs = append(objs, l.pod)
+	}
+	if l.namespace != nil {
+		objs = append(objs, l.namespace)
+	}
+	if l.policy != nil {
+		objs = append(objs, l.policy)
 	}
 	return objs
 }
@@ -252,10 +276,11 @@ type grantCase struct {
 	wantStatus     int
 	wantReason     string
 	wantRetryAfter string
-	// wantFiberMax and wantLease are what the verified grant of a 200
-	// carries.
-	wantFiberMax int
-	wantLease    time.Duration
+	// wantFiberMax, wantLease and wantIsolation are what the verified grant
+	// of a 200 carries.
+	wantFiberMax  int
+	wantLease     time.Duration
+	wantIsolation core.Isolation
 }
 
 // grantEnv is a Handler over one chain and what a case reads back from it.
@@ -317,8 +342,8 @@ func (e *grantEnv) previous(t *testing.T, uid string, iat time.Time) string {
 	return signPrevious(t, e.key, uid, iat)
 }
 
-// signPrevious signs a grant for uid with key, as the issuer would have at
-// iat. Its claims are previousFiberMax and previousLease.
+// signPrevious signs a TRUSTED grant for uid with key, as the issuer would
+// have at iat. Its claims are previousFiberMax and previousLease.
 func signPrevious(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time) string {
 	t.Helper()
 	return signBound(t, key, uid, iat, grantThumbprint)
@@ -327,6 +352,12 @@ func signPrevious(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time)
 // signBound is signPrevious bound to the caller with thumbprint. Empty
 // binds it to none, as a grant of a plaintext Pod was.
 func signBound(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time, thumbprint string) string {
+	t.Helper()
+	return signIsolated(t, key, uid, iat, thumbprint, core.Trusted)
+}
+
+// signIsolated is signBound with isolation as the grant's isolation.
+func signIsolated(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time, thumbprint string, isolation core.Isolation) string {
 	t.Helper()
 	tok, err := grant.Sign(core.Grant{
 		UID:            uid,
@@ -339,7 +370,7 @@ func signBound(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time, th
 		LeaseExpiry:    iat.Add(previousLease),
 		Policy: core.Policy{
 			Durability:   core.BestEffort,
-			Isolation:    core.Trusted,
+			Isolation:    isolation,
 			EndpointMode: core.EndpointDirect,
 		},
 		CallerThumbprint: thumbprint,
@@ -373,6 +404,12 @@ func renewingPodA(t *testing.T, e *grantEnv) string {
 
 // stale gives the Pod a hash no spec has.
 func stale(l *lineage) { l.pod.Annotations[podtemplate.AnnotationGrantHash] = staleHash }
+
+// noLabel takes the exception's label off the namespace.
+func noLabel(l *lineage) { l.namespace.Labels = nil }
+
+// gvisor moves a grant to a runtime that needs no exception.
+func gvisor(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeGvisor }
 
 // serve sends tc's request through the Handler's routes and returns the
 // env and the answer.
@@ -511,6 +548,16 @@ func grantRefusals() []grantCase {
 			wantReason: reasonSuperseded,
 		},
 		{
+			// The renewal is TRUSTED and gVisor has no exception, so it falls
+			// to a first grant, and the Pod's spec is gone.
+			name:       "409 a TRUSTED Pod whose spec moved to gVisor",
+			spec:       gvisor,
+			mutate:     stale,
+			body:       renewingPodA,
+			wantStatus: http.StatusConflict,
+			wantReason: reasonSuperseded,
+		},
+		{
 			// A Pod built when grant Pods still served plaintext holds a
 			// grant bound to no caller. It must lapse, not renew forever.
 			name: "409 a renewal of a grant bound to no caller",
@@ -556,6 +603,36 @@ func grantRefusals() []grantCase {
 			name:           "503 a live re-read of the grant that fails",
 			mutate:         stale,
 			liveFuncs:      failGet(&v1alpha1.CapacityGrant{}),
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReason:     reasonUnavailable,
+			wantRetryAfter: "5",
+		},
+		{
+			name:           "503 a read of the Namespace that fails",
+			liveFuncs:      failGet(&corev1.Namespace{}),
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReason:     reasonUnavailable,
+			wantRetryAfter: "5",
+		},
+		{
+			name:           "503 a read of the GrantPolicy that fails",
+			liveFuncs:      failGet(&v1alpha1.GrantPolicy{}),
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReason:     reasonUnavailable,
+			wantRetryAfter: "5",
+		},
+		{
+			name:           "503 a read of the Namespace that fails on a renewal",
+			liveFuncs:      failGet(&corev1.Namespace{}),
+			body:           renewingPodA,
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReason:     reasonUnavailable,
+			wantRetryAfter: "5",
+		},
+		{
+			name:           "503 a read of the GrantPolicy that fails on a renewal",
+			liveFuncs:      failGet(&v1alpha1.GrantPolicy{}),
+			body:           renewingPodA,
 			wantStatus:     http.StatusServiceUnavailable,
 			wantReason:     reasonUnavailable,
 			wantRetryAfter: "5",
@@ -609,17 +686,64 @@ func TestServeGrantHidesWhichPodCheckFailed(t *testing.T) {
 }
 
 func TestServeGrantIssues(t *testing.T) {
-	first := grantCase{wantFiberMax: 4, wantLease: grantLease}
-	renewed := grantCase{wantFiberMax: previousFiberMax, wantLease: previousLease}
+	first := grantCase{wantFiberMax: 4, wantLease: grantLease, wantIsolation: core.Trusted}
+	renewed := grantCase{wantFiberMax: previousFiberMax, wantLease: previousLease, wantIsolation: core.Trusted}
+	untrusted := grantCase{wantFiberMax: 4, wantLease: grantLease, wantIsolation: core.Untrusted}
 	with := func(base grantCase, name string, change func(*grantCase)) grantCase {
 		base.name = name
 		change(&base)
 		return base
 	}
 	cases := []grantCase{
-		with(first, "a first grant", func(*grantCase) {}),
-		with(renewed, "a renewal keeps the claims of previous", func(c *grantCase) {
+		with(first, "a first grant with the exception is TRUSTED", func(*grantCase) {}),
+		with(first, "a first runc grant with the exception is TRUSTED", func(c *grantCase) {
+			c.spec = func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc }
+		}),
+		with(untrusted, "a first grant with no label is UNTRUSTED", func(c *grantCase) { c.mutate = noLabel }),
+		with(untrusted, "a first grant with no Namespace is UNTRUSTED", func(c *grantCase) {
+			c.mutate = func(l *lineage) { l.namespace = nil }
+		}),
+		with(untrusted, "a first grant with no GrantPolicy is UNTRUSTED", func(c *grantCase) {
+			c.mutate = func(l *lineage) { l.policy = nil }
+		}),
+		with(untrusted, "a first grant past the ceiling is UNTRUSTED", func(c *grantCase) {
+			c.mutate = func(l *lineage) { l.policy.Spec.Runtimes = []v1alpha1.Runtime{v1alpha1.RuntimeHyperlight} }
+		}),
+		with(untrusted, "a first gVisor grant reads no trust object", func(c *grantCase) {
+			c.spec = gvisor
+			c.liveFuncs = failGet(&corev1.Namespace{})
+		}),
+		with(renewed, "a renewal with the exception keeps the claims of previous and stays TRUSTED", func(c *grantCase) {
 			c.body = renewingPodA
+		}),
+		with(untrusted, "regression: a renewal after the label is gone is a first grant, UNTRUSTED", func(c *grantCase) {
+			c.mutate = noLabel
+			c.body = renewingPodA
+		}),
+		with(first, "regression: an UNTRUSTED renewal after the label is added is a first grant, TRUSTED", func(c *grantCase) {
+			c.body = func(t *testing.T, e *grantEnv) string {
+				return renewal(signIsolated(t, e.key, podA, testStart.Add(-time.Minute), grantThumbprint, core.Untrusted))
+			}
+		}),
+		with(renewed, "an UNTRUSTED renewal needs no exception and reads no trust object", func(c *grantCase) {
+			c.spec = gvisor
+			c.liveFuncs = failGet(&corev1.Namespace{})
+			c.wantIsolation = core.Untrusted
+			c.body = func(t *testing.T, e *grantEnv) string {
+				return renewal(signIsolated(t, e.key, podA, testStart.Add(-time.Minute), grantThumbprint, core.Untrusted))
+			}
+		}),
+		with(untrusted, "regression: the exception of a stale cached runtime does not reach the live runtime", func(c *grantCase) {
+			c.spec = func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc }
+			c.mutate = func(l *lineage) {
+				l.namespace, l.policy = exceptionFor(v1alpha1.RuntimeProc)
+				l.policy.Spec.Runtimes = []v1alpha1.Runtime{v1alpha1.RuntimeProc, v1alpha1.RuntimeRunc}
+			}
+			c.cache = func(l *lineage) []client.Object {
+				old := l.grant.DeepCopy()
+				old.Spec.Runtime = v1alpha1.RuntimeProc
+				return l.withGrant(old)
+			}
 		}),
 		with(renewed, "an expired previous still renews", func(c *grantCase) {
 			c.body = func(t *testing.T, e *grantEnv) string {
@@ -689,6 +813,9 @@ func TestServeGrantIssues(t *testing.T) {
 			if g.FiberMax != tc.wantFiberMax {
 				t.Errorf("fiberMax = %d, want %d", g.FiberMax, tc.wantFiberMax)
 			}
+			if g.Policy.Isolation != tc.wantIsolation {
+				t.Errorf("isolation = %s, want %s", g.Policy.Isolation, tc.wantIsolation)
+			}
 			if got.UID != podA || got.Audience != podName {
 				t.Errorf("the answer is for uid %q audience %q, want %q %q", got.UID, got.Audience, podA, podName)
 			}
@@ -700,6 +827,72 @@ func TestServeGrantIssues(t *testing.T) {
 			}
 			if !g.LeaseExpiry.Equal(got.ExpiresAt) {
 				t.Errorf("the grant's lease ends at %s, the answer says %s", g.LeaseExpiry, got.ExpiresAt)
+			}
+		})
+	}
+}
+
+func TestSignedUntrusted(t *testing.T) {
+	key := newKey(t)
+	iat := testStart.Add(-time.Minute)
+	cases := []struct {
+		name  string
+		token string
+		want  bool
+	}{
+		{name: "TRUSTED", token: signIsolated(t, key, podA, iat, grantThumbprint, core.Trusted)},
+		{name: "UNTRUSTED", token: signIsolated(t, key, podA, iat, grantThumbprint, core.Untrusted), want: true},
+		{name: "unspecified is untrusted", token: signIsolated(t, key, podA, iat, grantThumbprint, core.IsolationUnspecified), want: true},
+		{name: "a token that cannot be read counts as trusted", token: "not-a-grant"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := signedUntrusted(tc.token); got != tc.want {
+				t.Errorf("signedUntrusted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestServeGrantLogsAnUntrustedGrant keeps the one log line that says why
+// fiberd refuses a grant, since the CapacityGrant's status does not.
+func TestServeGrantLogsAnUntrustedGrant(t *testing.T) {
+	cases := []struct {
+		name     string
+		tc       grantCase
+		wantLine bool
+	}{
+		{name: "proc with no exception", tc: grantCase{mutate: noLabel}, wantLine: true},
+		{name: "a renewal that lost the exception", tc: grantCase{mutate: noLabel, body: renewingPodA}, wantLine: true},
+		{name: "proc with the exception"},
+		{name: "gVisor", tc: grantCase{spec: gvisor}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var lines []string
+			log := funcr.New(func(prefix, args string) {
+				if strings.Contains(args, untrustedMessage) {
+					lines = append(lines, args)
+				}
+			}, funcr.Options{})
+
+			if _, w := serve(t, tc.tc, log); w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s, want %d", w.Code, w.Body, http.StatusOK)
+			}
+
+			if !tc.wantLine {
+				if len(lines) != 0 {
+					t.Errorf("logged %q, want no line", lines)
+				}
+				return
+			}
+			if len(lines) != 1 {
+				t.Fatalf("logged %q, want one line", lines)
+			}
+			for _, want := range []string{podNamespace, `"web"`, string(v1alpha1.RuntimeProc)} {
+				if !strings.Contains(lines[0], want) {
+					t.Errorf("the line %q does not name %s", lines[0], want)
+				}
 			}
 		})
 	}

@@ -83,6 +83,8 @@ func TestGrantFromSpec(t *testing.T) {
 		name   string
 		mutate func(*v1alpha1.CapacityGrant)
 		pod    issuer.PodIdentity
+		// exception is what the namespace holds for the runtime.
+		exception bool
 		// now is the mapping time. Zero means testNow.
 		now   time.Time
 		lease time.Duration
@@ -97,19 +99,43 @@ func TestGrantFromSpec(t *testing.T) {
 			want:   func(g *core.Grant) { g.Policy.Isolation = core.Untrusted },
 		},
 		{
+			name:      "gvisor stays untrusted with the exception",
+			mutate:    func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeGvisor },
+			exception: true,
+			want:      func(g *core.Grant) { g.Policy.Isolation = core.Untrusted },
+		},
+		{
 			name:   "hyperlight is untrusted",
 			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeHyperlight },
 			want:   func(g *core.Grant) { g.Policy.Isolation = core.Untrusted },
 		},
 		{
-			name:   "proc is trusted",
-			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeProc },
-			want:   func(g *core.Grant) { g.Policy.Isolation = core.Trusted },
+			name:      "hyperlight stays untrusted with the exception",
+			mutate:    func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeHyperlight },
+			exception: true,
+			want:      func(g *core.Grant) { g.Policy.Isolation = core.Untrusted },
 		},
 		{
-			name:   "runc is trusted",
+			name:      "proc with the exception is trusted",
+			mutate:    func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeProc },
+			exception: true,
+			want:      func(g *core.Grant) { g.Policy.Isolation = core.Trusted },
+		},
+		{
+			name:   "proc without the exception is untrusted",
+			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeProc },
+			want:   func(g *core.Grant) { g.Policy.Isolation = core.Untrusted },
+		},
+		{
+			name:      "runc with the exception is trusted",
+			mutate:    func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc },
+			exception: true,
+			want:      func(g *core.Grant) { g.Policy.Isolation = core.Trusted },
+		},
+		{
+			name:   "runc without the exception is untrusted",
 			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc },
-			want:   func(g *core.Grant) { g.Policy.Isolation = core.Trusted },
+			want:   func(g *core.Grant) { g.Policy.Isolation = core.Untrusted },
 		},
 		{
 			name:   "max and warm carried",
@@ -212,7 +238,7 @@ func TestGrantFromSpec(t *testing.T) {
 				tc.want(&want)
 			}
 
-			got, err := issuer.GrantFromSpec(cg, pod, now, lease)
+			got, err := issuer.GrantFromSpec(cg, pod, tc.exception, now, lease)
 			if err != nil {
 				t.Fatalf("GrantFromSpec: %v", err)
 			}
@@ -376,7 +402,7 @@ func TestGrantFromSpecMappingErrors(t *testing.T) {
 				}
 			}
 
-			got, err := issuer.GrantFromSpec(cg, pod, testNow, lease)
+			got, err := issuer.GrantFromSpec(cg, pod, false, testNow, lease)
 			if err == nil {
 				t.Fatalf("GrantFromSpec = %+v, want an error", got)
 			}
@@ -448,7 +474,7 @@ func TestGrantFromSpecCoreRefusal(t *testing.T) {
 				t.Fatalf("core.Grant.Validate accepts %+v, the case must build a grant it refuses", seen)
 			}
 
-			got, err := issuer.GrantFromSpec(cg, tc.pod, testNow, time.Hour)
+			got, err := issuer.GrantFromSpec(cg, tc.pod, false, testNow, time.Hour)
 			if err == nil {
 				t.Fatalf("GrantFromSpec = %+v, want core's error %q", got, coreErr)
 			}
@@ -503,7 +529,8 @@ func TestGrantRoundTrip(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(cg)
 			}
-			g, err := issuer.GrantFromSpec(cg, testPod, testNow, tc.lease)
+			// With the exception, so TRUSTED round-trips as well as UNTRUSTED.
+			g, err := issuer.GrantFromSpec(cg, testPod, true, testNow, tc.lease)
 			if err != nil {
 				t.Fatalf("GrantFromSpec: %v", err)
 			}

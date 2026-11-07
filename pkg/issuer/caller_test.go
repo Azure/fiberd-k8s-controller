@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	"github.com/Azure/fiberd/pkg/core"
 	"github.com/Azure/fiberd/pkg/grant"
 	"github.com/Azure/fiberd/pkg/tlsconf"
 	"github.com/Azure/fiberd/pkg/tlsconf/tlsconftest"
@@ -339,6 +340,30 @@ func TestServeCallerGrantsRefusals(t *testing.T) {
 			wantRetryAfter: "5",
 		},
 		{
+			name:           "503 a read of the Namespace that fails",
+			edit:           func(_ *testing.T, e *callerEnv) { e.funcs = failGet(&corev1.Namespace{}) },
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReason:     reasonUnavailable,
+			wantRetryAfter: "5",
+		},
+		{
+			name:           "503 a read of the GrantPolicy that fails",
+			edit:           func(_ *testing.T, e *callerEnv) { e.funcs = failGet(&v1alpha1.GrantPolicy{}) },
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReason:     reasonUnavailable,
+			wantRetryAfter: "5",
+		},
+		{
+			// The trust read comes after every refusal the spec can earn.
+			name: "422 an invalid spec before a read that would fail",
+			edit: func(_ *testing.T, e *callerEnv) {
+				e.l.grant.Spec.Fibers.Max = 0
+				e.funcs = failGet(&corev1.Namespace{})
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantReason: reasonInvalidSpec,
+		},
+		{
 			name:       "500 an issuer with no key",
 			edit:       func(_ *testing.T, e *callerEnv) { e.noKey = true },
 			wantStatus: http.StatusInternalServerError,
@@ -589,9 +614,67 @@ func TestServeCallerGrantsLimitsEachGrant(t *testing.T) {
 	}
 }
 
-// TestServeCallerGrantsReadsOnlyTheCache keeps a missing grant from costing
-// a live read, whose latency would tell it from a grant that names another
-// key.
+// TestServeCallerGrantsIsolation shows that a caller's grant carries the same
+// trust as the Pod's own, decided at every request.
+func TestServeCallerGrantsIsolation(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*callerEnv)
+		want core.Isolation
+	}{
+		{name: "proc with the exception is TRUSTED", edit: func(*callerEnv) {}, want: core.Trusted},
+		{name: "proc with no label is UNTRUSTED", edit: func(e *callerEnv) { noLabel(e.l) }, want: core.Untrusted},
+		{name: "proc with no Namespace is UNTRUSTED", edit: func(e *callerEnv) { e.l.namespace = nil }, want: core.Untrusted},
+		{name: "proc with no GrantPolicy is UNTRUSTED", edit: func(e *callerEnv) { e.l.policy = nil }, want: core.Untrusted},
+		{name: "proc past the ceiling is UNTRUSTED", edit: func(e *callerEnv) { e.l.policy.Spec.Runtimes = nil }, want: core.Untrusted},
+		{name: "gVisor is UNTRUSTED", edit: func(e *callerEnv) { gvisor(e.l.grant) }, want: core.Untrusted},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newCallerEnv(t)
+			tc.edit(e)
+			_, key, w := e.serve(t)
+			got := decodeCallerGrants(t, w)
+			if len(got.Grants) != 1 {
+				t.Fatalf("grants for %q, want one", grantedPods(got))
+			}
+			pub := grant.PublicJWKS(key).Keys[0]
+			g, err := grant.Verify(got.Grants[0].Token, &pub, grant.VerifyOptions{Audience: podName, Issuer: testIssuerURL})
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if g.Policy.Isolation != tc.want {
+				t.Errorf("isolation = %s, want %s", g.Policy.Isolation, tc.want)
+			}
+		})
+	}
+}
+
+// TestServeCallerGrantsDecidesTrustOnce keeps the live reads of one request
+// from growing with its Pods.
+func TestServeCallerGrantsDecidesTrustOnce(t *testing.T) {
+	e := newCallerEnv(t)
+	rs := e.l.replicaSet
+	e.extra = []client.Object{callerPod(e.l, rs, "fiberd-web-1-b", podB, "10.1.0.2", testStart.Add(-time.Minute))}
+	reads := 0
+	e.liveFuncs = &interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+			reads++
+			return c.Get(ctx, key, o, opts...)
+		},
+	}
+	_, _, w := e.serve(t)
+	if got := decodeCallerGrants(t, w); len(got.Grants) != 2 {
+		t.Fatalf("grants for %q, want two", grantedPods(got))
+	}
+	if reads != 2 {
+		t.Errorf("one request read %d objects live, want the Namespace and the GrantPolicy once", reads)
+	}
+}
+
+// TestServeCallerGrantsReadsOnlyTheCache keeps a missing grant and one that
+// names another key from costing a live read, whose latency would tell them
+// apart. A runtime that needs no exception costs none either.
 func TestServeCallerGrantsReadsOnlyTheCache(t *testing.T) {
 	fail := interceptor.Funcs{
 		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
@@ -601,14 +684,19 @@ func TestServeCallerGrantsReadsOnlyTheCache(t *testing.T) {
 			return errAPIServer
 		},
 	}
-	for name, body := range map[string]string{
-		"a missing grant": `{"namespace":"` + podNamespace + `","name":"other"}`,
-		"a served grant":  `{"namespace":"` + podNamespace + `","name":"web"}`,
+	for name, edit := range map[string]func(*testing.T, *callerEnv){
+		"a missing grant": func(_ *testing.T, e *callerEnv) {
+			e.body = `{"namespace":"` + podNamespace + `","name":"other"}`
+		},
+		"a grant that names another key": func(t *testing.T, e *callerEnv) {
+			e.certs = []*x509.Certificate{e.pki.ca.Client(t, "stranger").Cert}
+		},
+		"a served gVisor grant": func(_ *testing.T, e *callerEnv) { gvisor(e.l.grant) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newCallerEnv(t)
 			e.liveFuncs = &fail
-			e.body = body
+			edit(t, e)
 			if _, _, w := e.serve(t); w.Code == http.StatusServiceUnavailable {
 				t.Errorf("the route read the API server: %d %s", w.Code, w.Body)
 			}

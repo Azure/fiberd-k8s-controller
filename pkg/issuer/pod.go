@@ -11,12 +11,17 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/fiberd/pkg/core"
 	"github.com/Azure/fiberd/pkg/grant"
 
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
 )
+
+// untrustedMessage is the log message of a proc or runc grant signed
+// UNTRUSTED.
+const untrustedMessage = "Signed a grant UNTRUSTED, the namespace holds no exception for its runtime"
 
 // grantRequest is the body of a grant request. Core's fetcher writes the
 // same field.
@@ -75,6 +80,10 @@ func (h *Handler) serveGrant(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	exception, err := h.holdsException(ctx, cg)
+	if err != nil {
+		return nil, err
+	}
 
 	// GrantFromSpec requires now to be no later than the time the Issuer
 	// signs at, and the Issuer runs on the same clock.
@@ -86,8 +95,14 @@ func (h *Handler) serveGrant(r *http.Request) (any, error) {
 	if renewed && !callerBound(answer.Token) {
 		return nil, refuse(http.StatusConflict, reasonUnboundGrant, errUnboundGrant)
 	}
+	// A renewal repeats the claims of previous, and trust follows the
+	// exception both ways. A Pod that lost it or gained it gets a first grant.
+	// gVisor and Hyperlight hold no exception and sign UNTRUSTED, so they renew.
+	if renewed && signedUntrusted(answer.Token) == exception {
+		renewed = false
+	}
 	if !renewed {
-		if answer, err = h.issue(ctx, cg, pod, now); err != nil {
+		if answer, err = h.issue(ctx, cg, pod, exception, now); err != nil {
 			return nil, err
 		}
 	}
@@ -163,37 +178,73 @@ func (h *Handler) renew(previous string, pod *corev1.Pod, now time.Time) (grantA
 	return newAnswer(token, pod, now, expiresAt), true
 }
 
+// peekClaims reads the claims of token, which this issuer has just signed,
+// into claims.
+func peekClaims(token string, claims any) error {
+	tok, err := jwt.ParseSigned(token, grant.AllowedAlgorithms)
+	if err != nil {
+		return err
+	}
+	return tok.UnsafeClaimsWithoutVerification(claims)
+}
+
 // callerBound reports whether token, which this issuer has just signed,
 // carries a cnf jkt.
 func callerBound(token string) bool {
-	tok, err := jwt.ParseSigned(token, grant.AllowedAlgorithms)
-	if err != nil {
-		return false
-	}
 	var claims struct {
 		Cnf struct {
 			JKT string `json:"jkt"`
 		} `json:"cnf"`
 	}
-	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
+	if err := peekClaims(token, &claims); err != nil {
 		return false
 	}
 	return claims.Cnf.JKT != ""
 }
 
-// issue mints a first grant for pod from the spec it was built from.
-func (h *Handler) issue(ctx context.Context, cg *v1alpha1.CapacityGrant, pod *corev1.Pod, now time.Time) (grantAnswer, error) {
-	cg, err := h.current(ctx, cg, pod)
+// signedUntrusted reports whether token, which this issuer has just signed,
+// asks for an isolating runtime. A token that cannot be read counts as
+// trusted, so a renewal with no exception falls to a first grant.
+func signedUntrusted(token string) bool {
+	var claims struct {
+		Grant struct {
+			Policy struct {
+				Isolation string `json:"isolation"`
+			} `json:"policy"`
+		} `json:"grant"`
+	}
+	if err := peekClaims(token, &claims); err != nil {
+		return false
+	}
+	isolation, err := core.ParseIsolation(claims.Grant.Policy.Isolation)
+	return err == nil && isolation.Untrusted()
+}
+
+// issue mints a first grant for pod from the spec it was built from. exception
+// is what holdsException said of cg.
+func (h *Handler) issue(ctx context.Context, cg *v1alpha1.CapacityGrant, pod *corev1.Pod, exception bool, now time.Time) (grantAnswer, error) {
+	served, err := h.current(ctx, cg, pod)
 	if err != nil {
 		return grantAnswer{}, err
 	}
-	g, err := GrantFromSpec(cg, PodIdentity{UID: string(pod.UID), Name: pod.Name}, now, h.lease)
+	// current can answer with a newer spec than the cached cg, and an
+	// exception holds for one runtime.
+	if served.Spec.Runtime != cg.Spec.Runtime {
+		if exception, err = h.holdsException(ctx, served); err != nil {
+			return grantAnswer{}, err
+		}
+	}
+	g, err := GrantFromSpec(served, PodIdentity{UID: string(pod.UID), Name: pod.Name}, exception, now, h.lease)
 	if err != nil {
 		return grantAnswer{}, refuse(http.StatusUnprocessableEntity, reasonInvalidSpec, err)
 	}
 	token, err := h.issuer.Mint(g)
 	if err != nil {
 		return grantAnswer{}, refuse(http.StatusInternalServerError, reasonMintFailed, err)
+	}
+	// fiberd refuses this grant, and the CapacityGrant's status gives no cause.
+	if g.Policy.Isolation.Untrusted() && needsException(served.Spec.Runtime) {
+		h.log.Info(untrustedMessage, "namespace", served.Namespace, "capacityGrant", served.Name, "runtime", served.Spec.Runtime)
 	}
 	return newAnswer(token, pod, now, g.LeaseExpiry), nil
 }

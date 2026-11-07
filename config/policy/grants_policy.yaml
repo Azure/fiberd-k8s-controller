@@ -3,8 +3,8 @@
 # reach past that overlay. Its parameter is the GrantPolicy named default.
 # The builder repeats the checks on the grant alone at reconcile time, since
 # a grant stored before a rule existed must still not reach a Pod. The
-# controller never reads the GrantPolicy, so the rules on its lists hold at
-# admission only.
+# issuer reads the GrantPolicy to decide trust alone, and the rules on its
+# lists still hold at admission only.
 #
 # Runs on Kubernetes 1.30 and later. The CEL used here is core CEL, the
 # strings extension and macros, all present since 1.30.

@@ -21,9 +21,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/fiberd/pkg/core"
 	"github.com/Azure/fiberd/pkg/grant"
 
+	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
 	"github.com/Azure/fiberd-k8s-controller/pkg/testutil"
 	"github.com/Azure/fiberd-k8s-controller/pkg/workload/podtemplate"
@@ -75,6 +78,8 @@ func TestGrantRoute(t *testing.T) {
 		{name: "a Pod no grant owns gets nothing", run: testUnownedPod},
 		{name: "a terminating Pod gets nothing while its token still reviews", run: testTerminatingPod},
 		{name: "the grant service account can read its Pod and no Secret", run: testGrantServiceAccountRights},
+		{name: "a proc grant in a labelled namespace signs TRUSTED", run: testIsolation("labelled", true, core.Trusted)},
+		{name: "a proc grant with no label signs UNTRUSTED", run: testIsolation("unlabelled", false, core.Untrusted)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, tc.run)
@@ -174,6 +179,58 @@ func testGrantServiceAccountRights(t *testing.T) {
 		if ok {
 			t.Errorf("%s may %s Secrets in its namespace", user, verb)
 		}
+	}
+}
+
+// testIsolation runs a proc Pod's first grant through the manager's own
+// client and role. The GrantPolicy holds proc in every case, so the label
+// alone decides.
+func testIsolation(name string, labelled bool, want core.Isolation) func(*testing.T) {
+	return func(t *testing.T) {
+		createGrantPolicy(t, v1alpha1.RuntimeProc)
+		c := newGrantChain(t, name)
+		if labelled {
+			labelRuntime(t, c.deployment.Namespace, v1alpha1.RuntimeProc)
+		}
+		pod := c.pod(t, "fiberd-"+name+"-1-abcde", nil)
+
+		got := wantGrant(t, pod, podToken(t, pod, issuerURL), `{}`)
+
+		if g := verifyGrant(t, got.Token, pod.Name); g.Policy.Isolation != want {
+			t.Errorf("isolation = %s, want %s", g.Policy.Isolation, want)
+		}
+	}
+}
+
+// createGrantPolicy creates the one GrantPolicy for a case, with runtimes as
+// its ceiling. The control plane is shared, so it goes when the case ends.
+func createGrantPolicy(t *testing.T, runtimes ...v1alpha1.Runtime) {
+	t.Helper()
+	policy := &v1alpha1.GrantPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.GrantPolicyName},
+		Spec:       v1alpha1.GrantPolicySpec{Images: []string{"ghcr.io/azure/fiberd"}, Runtimes: runtimes},
+	}
+	if err := admin.Create(t.Context(), policy); err != nil {
+		t.Fatalf("create GrantPolicy %s: %v", policy.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := admin.Delete(context.Background(), policy); err != nil {
+			t.Errorf("delete GrantPolicy %s: %v", policy.Name, err)
+		}
+	})
+}
+
+// labelRuntime gives namespace name the exception for rt.
+func labelRuntime(t *testing.T, name string, rt v1alpha1.Runtime) {
+	t.Helper()
+	ns := &corev1.Namespace{}
+	if err := admin.Get(t.Context(), client.ObjectKey{Name: name}, ns); err != nil {
+		t.Fatalf("get Namespace %s: %v", name, err)
+	}
+	before := ns.DeepCopy()
+	metav1.SetMetaDataLabel(&ns.ObjectMeta, v1alpha1.RuntimeLabel(rt), v1alpha1.LabelRuntimeValue)
+	if err := admin.Patch(t.Context(), ns, client.MergeFrom(before)); err != nil {
+		t.Fatalf("label Namespace %s: %v", name, err)
 	}
 }
 
@@ -339,19 +396,26 @@ func wantGrant(t *testing.T, pod *corev1.Pod, token, body string) grantAnswer {
 		t.Errorf("the lease ends at %s, not after it starts at %s", got.ExpiresAt, got.IssuedAt)
 	}
 
+	if g := verifyGrant(t, got.Token, pod.Name); g.UID != string(pod.UID) || g.Tenant != pod.Namespace {
+		t.Errorf("the grant names uid %q tenant %q, want %q %q", g.UID, g.Tenant, pod.UID, pod.Namespace)
+	}
+	return got
+}
+
+// verifyGrant checks token against the served key set for audience, as
+// fiberd would verify it.
+func verifyGrant(t *testing.T, token, audience string) core.Grant {
+	t.Helper()
 	var set jose.JSONWebKeySet
 	getIssuerJSON(t, issuer.JWKSPath, &set)
 	if len(set.Keys) == 0 {
 		t.Fatal("the issuer serves no key")
 	}
-	g, err := grant.Verify(got.Token, &set.Keys[0], grant.VerifyOptions{Audience: pod.Name, Issuer: issuerURL})
+	g, err := grant.Verify(token, &set.Keys[0], grant.VerifyOptions{Audience: audience, Issuer: issuerURL})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if g.UID != string(pod.UID) || g.Tenant != pod.Namespace {
-		t.Errorf("the grant names uid %q tenant %q, want %q %q", g.UID, g.Tenant, pod.UID, pod.Namespace)
-	}
-	return got
+	return g
 }
 
 // wantRefusal posts as token and checks the refusal.
