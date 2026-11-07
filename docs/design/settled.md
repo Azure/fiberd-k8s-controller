@@ -15,6 +15,7 @@ These decisions are closed. State them as facts. A change to one changes this pa
 - Every spec change rolls the Pods ([what rolls a Pod](controller.md#what-rolls-a-pod)).
 - Status holds `observedGeneration`, the `Ready` and `Progressing` conditions, and `resolvedImage`. Nothing per Pod goes in status.
 - `spec.callerThumbprint` is the RFC 7638 thumbprint of the caller's public key. A grant has one caller identity.
+- `spec.runtime` is required and has no default.
 
 ## GrantPolicy
 

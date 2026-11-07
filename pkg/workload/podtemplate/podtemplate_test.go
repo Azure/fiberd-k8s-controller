@@ -760,6 +760,11 @@ func TestBuildErrors(t *testing.T) {
 			wantErr: "spec.runtime",
 		},
 		{
+			name:    "empty runtime",
+			mod:     func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = "" },
+			wantErr: "spec.runtime: Required value: a grant must name its runtime",
+		},
+		{
 			name:    "hyperlight without a helper image",
 			mod:     func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeHyperlight },
 			wantErr: "spec.helperImage: Required value",
@@ -768,14 +773,6 @@ func TestBuildErrors(t *testing.T) {
 			name: "a helper image on another runtime",
 			mod: func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.Runtime = v1alpha1.RuntimeGvisor
-				cg.Spec.HelperImage = testHelperImage
-			},
-			wantErr: "spec.helperImage: Forbidden: allowed only for runtime hyperlight",
-		},
-		{
-			name: "a helper image on the unset runtime",
-			mod: func(cg *v1alpha1.CapacityGrant) {
-				cg.Spec.Runtime = ""
 				cg.Spec.HelperImage = testHelperImage
 			},
 			wantErr: "spec.helperImage: Forbidden: allowed only for runtime hyperlight",

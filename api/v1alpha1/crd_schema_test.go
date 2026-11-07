@@ -158,9 +158,9 @@ var podTemplateRules = []string{
 
 // specRules are the CEL rules on spec, in marker order.
 var specRules = []string{
-	"!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",
-	"!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",
-	"!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight' || has(self.zygote.sealKeySecretName)",
+	"!has(self.helperImage) || self.runtime == 'hyperlight'",
+	"self.runtime != 'hyperlight' || has(self.helperImage)",
+	"!has(self.zygote.registry) || self.runtime != 'hyperlight' || has(self.zygote.sealKeySecretName)",
 }
 
 // warmRule is the CEL rule on spec.fibers.
@@ -194,7 +194,7 @@ func TestCapacityGrantSchema(t *testing.T) {
 		{
 			name:     "spec requires zygote fibers callerThumbprint and podTemplate",
 			path:     "spec",
-			required: []string{"zygote", "fibers", "callerThumbprint", "podTemplate"},
+			required: []string{"zygote", "fibers", "callerThumbprint", "runtime", "podTemplate"},
 		},
 		{
 			name:               "spec carries the runtime rules",
@@ -276,9 +276,9 @@ func TestCapacityGrantSchema(t *testing.T) {
 			enum: []string{"proc", "runc", "gvisor", "hyperlight"},
 		},
 		{
-			name:        "runtime defaults to proc",
-			path:        "spec.runtime",
-			defaultJSON: `"proc"`,
+			name:      "runtime has no default",
+			path:      "spec.runtime",
+			noDefault: true,
 		},
 		{
 			name:       "podTemplate has metadata and spec",

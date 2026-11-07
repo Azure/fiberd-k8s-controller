@@ -208,6 +208,13 @@ func TestCRDValidation(t *testing.T) {
 			wantErr: "seLinuxOptions and windowsOptions are not allowed",
 		},
 		{
+			name: "no runtime",
+			mutate: func(_ *testing.T, u *unstructured.Unstructured) {
+				unstructured.RemoveNestedField(u.Object, "spec", "runtime")
+			},
+			wantErr: "spec.runtime: Required value",
+		},
+		{
 			name: "a helper image on runtime proc",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
 				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))

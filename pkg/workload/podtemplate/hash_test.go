@@ -146,7 +146,6 @@ func TestHashSensitive(t *testing.T) {
 			},
 			wantChange: true,
 		},
-		{name: "unset runtime hashes as proc", mod: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = "" }},
 		{name: "grant labels", mod: func(cg *v1alpha1.CapacityGrant) { cg.Labels = map[string]string{"owner": "b"} }},
 		{name: "resource version", mod: func(cg *v1alpha1.CapacityGrant) { cg.ResourceVersion = "42" }},
 		{name: "generation", mod: func(cg *v1alpha1.CapacityGrant) { cg.Generation = 7 }},

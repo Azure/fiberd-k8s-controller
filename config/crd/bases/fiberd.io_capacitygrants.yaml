@@ -9044,8 +9044,9 @@ spec:
                     || !has(self.spec.containers[0].securityContext.privileged) ||
                     !self.spec.containers[0].securityContext.privileged'
               runtime:
-                default: proc
-                description: runtime is the fiberd backend that runs the fibers.
+                description: |-
+                  runtime is the fiberd backend that runs the fibers. It is required and has no default.
+                  The GrantPolicy says which runtimes a namespace may use.
                 enum:
                 - proc
                 - runc
@@ -9112,25 +9113,25 @@ spec:
             - callerThumbprint
             - fibers
             - podTemplate
+            - runtime
             - zygote
             type: object
             x-kubernetes-validations:
             - fieldPath: .helperImage
               message: helperImage is allowed only for runtime hyperlight
               reason: FieldValueForbidden
-              rule: '!has(self.helperImage) || (has(self.runtime) && self.runtime
-                == ''hyperlight'')'
+              rule: '!has(self.helperImage) || self.runtime == ''hyperlight'''
             - fieldPath: .helperImage
               message: runtime hyperlight needs helperImage, fiberd does not start
                 without its helper
               reason: FieldValueRequired
-              rule: '!has(self.runtime) || self.runtime != ''hyperlight'' || has(self.helperImage)'
+              rule: self.runtime != 'hyperlight' || has(self.helperImage)
             - fieldPath: .zygote.sealKeySecretName
               message: runtime hyperlight with zygote.registry needs zygote.sealKeySecretName,
                 the pulled snapshot is sealed
               reason: FieldValueRequired
-              rule: '!has(self.zygote.registry) || !has(self.runtime) || self.runtime
-                != ''hyperlight'' || has(self.zygote.sealKeySecretName)'
+              rule: '!has(self.zygote.registry) || self.runtime != ''hyperlight''
+                || has(self.zygote.sealKeySecretName)'
           status:
             description: status is the observed state of the grant.
             properties:

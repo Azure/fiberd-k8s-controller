@@ -164,8 +164,8 @@ func budgetBytes(fld *field.Path, q *resource.Quantity) (uint64, field.ErrorList
 // and Hyperlight keep fibers off the host kernel, so their grants are always
 // Untrusted. proc and runc share the host kernel, so their grants are Trusted
 // only with the namespace's exception, and fiberd refuses them Untrusted. An
-// unset runtime is refused instead of read as proc, because the API server
-// always defaults it and an object without it skipped admission.
+// unset runtime is refused instead of read as proc, because the CRD requires
+// it and an object without it skipped admission.
 func isolationFor(fld *field.Path, r v1alpha1.Runtime, exception bool) (core.Isolation, field.ErrorList) {
 	switch r {
 	case v1alpha1.RuntimeGvisor, v1alpha1.RuntimeHyperlight:

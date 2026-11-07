@@ -142,7 +142,7 @@ spec:
     - name: runtimeLabelValue
       expression: "'true'"
     - name: runtimeLabel
-      expression: "has(object.spec.runtime) ? variables.runtimeLabelPrefix + object.spec.runtime : ''"
+      expression: "variables.runtimeLabelPrefix + object.spec.runtime"
     # Any value other than runtimeLabelValue is no exception.
     - name: runtimeExcepted
       expression: "has(namespaceObject.metadata.labels) && variables.runtimeLabel in namespaceObject.metadata.labels && namespaceObject.metadata.labels[variables.runtimeLabel] == variables.runtimeLabelValue"
@@ -227,14 +227,14 @@ spec:
       messageExpression: "'mount path ' + variables.outsidePaths[0] + ' must be at or under ' + variables.mountRoots.join(', ')"
       message: "a mountPath, devicePath or terminationMessagePath is outside the directories a tenant may mount in"
       reason: Forbidden
-    - expression: "has(object.spec.runtime) && object.spec.runtime in variables.runtimes"
-      messageExpression: "has(object.spec.runtime) ? 'runtime ' + object.spec.runtime + ' is not listed in GrantPolicy default spec.runtimes' : 'spec.runtime is required'"
+    - expression: "object.spec.runtime in variables.runtimes"
+      messageExpression: "'runtime ' + object.spec.runtime + ' is not listed in GrantPolicy default spec.runtimes'"
       message: "spec.runtime must be listed in GrantPolicy default spec.runtimes"
       reason: Forbidden
     # The first refusal is the one reported, so this rule follows the ceiling
     # rule. A runtime outside the ceiling hears that, not advice about a label
     # that cannot help.
-    - expression: "(has(object.spec.runtime) && object.spec.runtime in variables.defaultRuntimes) || variables.runtimeExcepted"
-      messageExpression: "has(object.spec.runtime) ? 'runtime ' + object.spec.runtime + ' needs the label ' + variables.runtimeLabel + '=' + variables.runtimeLabelValue + ' on namespace ' + object.metadata.namespace : 'spec.runtime is required'"
+    - expression: "object.spec.runtime in variables.defaultRuntimes || variables.runtimeExcepted"
+      messageExpression: "'runtime ' + object.spec.runtime + ' needs the label ' + variables.runtimeLabel + '=' + variables.runtimeLabelValue + ' on namespace ' + object.metadata.namespace"
       message: "a runtime outside GrantPolicy default spec.defaultRuntimes needs the label runtimes.fiberd.io/<runtime>=true on its namespace"
       reason: Forbidden
