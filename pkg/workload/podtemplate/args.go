@@ -26,6 +26,9 @@ var guestArgPattern = regexp.MustCompile(GuestArgPattern)
 // guestFlag is the flag GuestArgPattern governs.
 const guestFlag = "hyperlight-guest"
 
+// engineFlag is the flag that names the device engine.
+const engineFlag = "engine"
+
 // tenantFlags are the fiberd flags a tenant may pass in args. Every other
 // flag fiberd binds is the controller's, such as -issuer and the -template,
 // -registry and -delta-seal-key that spec.zygote sets, or the operator's,
@@ -46,7 +49,7 @@ var tenantFlags = map[string]bool{
 	"devices": true,
 	// The device engine is the tenant's own program, which fiberd runs as
 	// the engine uid with the engine capability set.
-	"engine": true,
+	engineFlag: true,
 	// The engine's memory, carved from the container's limit.
 	"engine-memory-max": true,
 	// The block ceiling, within the container's memory limit.
@@ -92,4 +95,17 @@ func checkArgs(fld *field.Path, args []string) field.ErrorList {
 		}
 	}
 	return errs
+}
+
+// engineSet reports whether args set a device engine. The last engine flag
+// wins, as Go's flag package reads flags, and an empty value sets none, which
+// is fiberd's own test.
+func engineSet(args []string) bool {
+	set := false
+	for _, arg := range args {
+		if name, value, _ := strings.Cut(strings.TrimLeft(arg, "-"), "="); name == engineFlag {
+			set = value != ""
+		}
+	}
+	return set
 }

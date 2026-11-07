@@ -249,7 +249,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	setProbes(c)
 	c.Resources = resources
 	addHelper(&tmpl.Spec, c, rt, cg.Spec.HelperImage)
-	if c.SecurityContext, err = securityContext(c.SecurityContext, rt); err != nil {
+	if c.SecurityContext, err = securityContext(c.SecurityContext, rt, c.Args); err != nil {
 		return corev1.PodTemplateSpec{}, err
 	}
 	return *tmpl, nil
