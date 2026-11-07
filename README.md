@@ -8,6 +8,24 @@ A grant Pod is an ordinary Kubernetes Pod that runs fiberd for exactly one grant
 The [design](./docs/design/controller.md) explains how the pieces fit.
 [What is settled](./docs/design/settled.md) lists the decisions that are closed.
 
+## Install a release
+
+A release names the controller image by digest, in its `install.yaml` and in its chart. Take a tag from the [releases](https://github.com/Azure/fiberd-k8s-controller/releases). The cluster needs cert-manager and its csi-driver first, as [Install](#install) says.
+
+Apply the release's manifest, then create the GrantPolicy and onboard tenants as steps 2 and 3 of [Install](#install) say.
+
+```bash
+kubectl apply -f https://github.com/Azure/fiberd-k8s-controller/releases/download/<tag>/install.yaml
+```
+
+Or install its chart, where the version is the tag without its `v`. The chart creates the GrantPolicy and onboards tenants from its `grantPolicy` and `tenants` values.
+
+```bash
+helm install fiberd-k8s-controller oci://ghcr.io/azure/charts/fiberd-k8s-controller --version <version> --namespace fiberd-system --create-namespace
+```
+
+[Releasing](./docs/releasing.md) says how to verify a release.
+
 ## Install
 
 The cluster needs [cert-manager](https://cert-manager.io/docs/installation/) and its [csi-driver](https://cert-manager.io/docs/usage/csi-driver/) installed first. The controller and every grant Pod take their certificates from them, so neither starts without them.

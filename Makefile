@@ -24,7 +24,7 @@ export FIBERD_REF
 
 .DEFAULT_GOAL := help
 
-.PHONY: help manifests generate chart fmt vet lint test test-envtest test-chart image image-multiarch kind-up kind-images kind-deps kind-deploy kind-smoke kind-conform kind-dump kind-down conform-kind tidy verify
+.PHONY: help manifests generate chart fmt vet lint test test-envtest test-chart check-pin release-assets image image-multiarch kind-up kind-images kind-deps kind-deploy kind-smoke kind-conform kind-dump kind-down conform-kind tidy verify
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -62,6 +62,17 @@ test-envtest:
 # Renders the chart and compares it with config. It needs helm but no cluster.
 test-chart:
 	KUSTOMIZE="$(KUSTOMIZE)" $(GO) test -tags chart -race -count=1 $(TESTFLAGS) ./test/chart/...
+
+# The rules on the fiberd pin. A release enforces them, and here they warn.
+check-pin:
+	$(GO) run ./hack/release pin
+
+# Packages the chart and install.yaml with a stand-in digest, which needs helm
+# but no registry. A release does the same with the real one.
+RELEASE_DIGEST ?= sha256:0000000000000000000000000000000000000000000000000000000000000000
+release-assets:
+	KUSTOMIZE="$(KUSTOMIZE)" hack/release/package.sh bin/release 0.0.0-dev "$(RELEASE_DIGEST)"
+	hack/release/check-assets.sh bin/release 0.0.0-dev "$(RELEASE_DIGEST)"
 
 # The host architecture, with no attestation manifest, so kind can load it.
 image:
