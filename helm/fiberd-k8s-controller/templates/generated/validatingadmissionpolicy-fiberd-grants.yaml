@@ -42,6 +42,11 @@ spec:
     messageExpression: '''arg '' + variables.args.filter(a, !a.contains(''='') &&
       !(a in variables.bareArgs))[0] + '' must carry its value as -name=value'''
     reason: Invalid
+  - expression: variables.relativeGuests.size() == 0
+    message: a -hyperlight-guest arg must carry an absolute path
+    messageExpression: '''arg '' + variables.relativeGuests[0] + '' must carry an
+      absolute path'''
+    reason: Invalid
   - expression: variables.image == '' || variables.image.matches('@sha256:[a-f0-9]{64}$')
     message: the fiberd container image must carry a digest, such as ghcr.io/azure/fiberd:0.4.0@sha256:...
     reason: Invalid
@@ -154,6 +159,11 @@ spec:
     name: tenantFlagArgs
   - expression: '[''-gvisor-templates-on-disk'', ''--gvisor-templates-on-disk'']'
     name: bareArgs
+  - expression: '''^-{1,2}hyperlight-guest=(/.*)?$'''
+    name: guestArgPattern
+  - expression: variables.args.filter(a, a.split('=')[0] in ['-hyperlight-guest',
+      '--hyperlight-guest'] && !a.matches(variables.guestArgPattern))
+    name: relativeGuests
   - expression: '''^FIBERD_TENANT_[A-Z0-9_]+$'''
     name: envNamePattern
   - expression: 'has(variables.container.env) ? variables.container.env.map(e, e.name)

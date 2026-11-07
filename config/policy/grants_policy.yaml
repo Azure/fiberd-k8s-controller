@@ -69,6 +69,13 @@ spec:
     # equal to podtemplate's tenantBoolFlags.
     - name: bareArgs
       expression: "['-gvisor-templates-on-disk', '--gvisor-templates-on-disk']"
+    # A guest value is empty or an absolute path, because fiberd refuses to
+    # start on a relative path. A test keeps the pattern equal to
+    # podtemplate.GuestArgPattern.
+    - name: guestArgPattern
+      expression: "'^-{1,2}hyperlight-guest=(/.*)?$'"
+    - name: relativeGuests
+      expression: "variables.args.filter(a, a.split('=')[0] in ['-hyperlight-guest', '--hyperlight-guest'] && !a.matches(variables.guestArgPattern))"
     # The only shape a tenant env name may take. A test keeps it equal to
     # podtemplate.EnvNamePattern, which says why names sit under one root.
     - name: envNamePattern
@@ -144,6 +151,10 @@ spec:
     - expression: "variables.args.all(a, a.contains('=') || a in variables.bareArgs)"
       messageExpression: "'arg ' + variables.args.filter(a, !a.contains('=') && !(a in variables.bareArgs))[0] + ' must carry its value as -name=value'"
       message: "a podTemplate arg must carry its value as -name=value, only a boolean flag may be bare"
+      reason: Invalid
+    - expression: "variables.relativeGuests.size() == 0"
+      messageExpression: "'arg ' + variables.relativeGuests[0] + ' must carry an absolute path'"
+      message: "a -hyperlight-guest arg must carry an absolute path"
       reason: Invalid
     # An absent image passes here. The controller reports InvalidSpec until
     # the grant sets one.
