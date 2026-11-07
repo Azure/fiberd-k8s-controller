@@ -63,7 +63,9 @@ The run tests the commit main is at when it starts, and it releases that commit.
 
 Re-running all jobs is safe. It builds new bytes with a new digest and refreshes the draft, and it stops at once on a tag that is already released.
 
-Every job that writes refuses a released tag, and only a complete listing of releases proves a tag is free. `publish` also requires the draft to list this run's digest, so an old run cannot publish a newer run's draft.
+Every job that writes refuses a released tag, and only a complete listing of releases proves a tag is free. `publish` also requires the draft to list this run's digest, so an old run cannot publish a newer run's draft. It then requires the image and chart tags to hold what the release names. An old run that is re-run can still tag its own bytes under the version, and then `publish` stops. Dispatch the version again to finish.
+
+Publish only through the workflow. A draft published by hand skips these checks and leaves a running job free to change it.
 
 The workflow deletes nothing. To abandon a version, delete its draft by hand with `gh release delete <tag>`. A registry tag it left stays until a later run of that version replaces it, and no release points at it.
 

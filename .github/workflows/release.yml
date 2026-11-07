@@ -109,9 +109,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v4.3.1
+      - name: Install helm
+        run: |
+          hack/release/install-helm.sh "${RUNNER_TEMP}/helm"
+          echo "${RUNNER_TEMP}/helm" >>"${GITHUB_PATH}"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
@@ -246,9 +247,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v4.3.1
+      - name: Install helm
+        run: |
+          hack/release/install-helm.sh "${RUNNER_TEMP}/helm"
+          echo "${RUNNER_TEMP}/helm" >>"${GITHUB_PATH}"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-image
@@ -293,6 +295,7 @@ jobs:
           source hack/release/lib.sh
           helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin <<<"${GH_TOKEN}"
           helm push "${RUNNER_TEMP}/assets/${CHART_NAME}-${VERSION}.tgz" "oci://${CHART%/*}"
+          helm registry logout ghcr.io
           digest="$(crane digest "${CHART}:${VERSION}")"
           check_digest "${digest}"
           echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
@@ -314,6 +317,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -328,14 +332,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DIGEST: ${{ needs.build.outputs.digest }}
         run: go run ./hack/release finish -tag "${TAG}" -digest "${DIGEST}" >>"${GITHUB_OUTPUT}"
+      # A new package can start private, so the tag check below needs a login.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: ${{ steps.finish.outputs.finished != 'true' }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - name: Publish the draft
         if: ${{ steps.finish.outputs.finished != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           DRAFT_ID: ${{ steps.finish.outputs.draft-id }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
           CHART_DIGEST: ${{ needs.push.outputs.chart-digest }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
-        run: hack/release/publish.sh "${DRAFT_ID}" "${CHART_DIGEST}" "${PRERELEASE}"
+        run: hack/release/publish.sh "${DRAFT_ID}" "${VERSION}" "${DIGEST}" "${CHART_DIGEST}" "${PRERELEASE}"
 
   # A new package can start private, so a first release can stop here. The
   # release stands. Set the package to public, then re-run this job alone.
