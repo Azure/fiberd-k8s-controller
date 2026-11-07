@@ -4,10 +4,11 @@ image:
   repository: ghcr.io/azure/fiberd-k8s-controller
   digest: ""
 
-# The whole spec of the GrantPolicy named default, the only one the controller
-# reads. Each images entry is a repository and matches images under it with
-# any tag. privilegedNamespaces and registries stay unset, so no grant may run
-# a privileged fiberd container or pull its zygote until an admin lists them.
+# The whole spec of the GrantPolicy named default, the only one the admission
+# policy reads. Each images entry is a repository and matches images under it
+# with any tag. privilegedNamespaces and registries stay unset, so no grant may
+# run a privileged fiberd container or pull its zygote until an admin lists
+# them.
 grantPolicy:
   images:
     - ghcr.io/azure/fiberd

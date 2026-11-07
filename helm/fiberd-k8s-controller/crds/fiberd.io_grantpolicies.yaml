@@ -76,7 +76,7 @@ spec:
                 description: |-
                   privilegedNamespaces are the namespaces whose grants may set securityContext.privileged
                   on the fiberd container, or ask for the gvisor or hyperlight runtime, which run
-                  privileged until their capability sets are measured.
+                  privileged.
                 items:
                   maxLength: 63
                   pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$

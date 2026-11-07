@@ -49,7 +49,7 @@ type GrantPolicySpec struct {
 
 	// privilegedNamespaces are the namespaces whose grants may set securityContext.privileged
 	// on the fiberd container, or ask for the gvisor or hyperlight runtime, which run
-	// privileged until their capability sets are measured.
+	// privileged.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=256
