@@ -23,12 +23,14 @@ Each stage is a subcommand of `conform.sh`, and `make conform-kind` runs them in
 | `up` | Creates the node, or keeps one that is Ready |
 | `images` | Builds the images, loads them, and names each by digest in the node |
 | `deps` | Installs cert-manager and its csi-driver |
-| `deploy` | Installs the chart and both grants, and fails on any restart before Ready |
-| `smoke` | Clones with the Pod's own grant on an image with no test hooks |
+| `deploy` | Installs the chart, issues the caller's certificate, and installs both grants. It fails on any restart before Ready |
+| `smoke` | Fetches a grant from the caller route and clones with it on an image with no test hooks |
 | `conform` | Runs fiberd's suite and requires C1 to C10 and C13 to report PASS |
 | `dump` | Saves the evidence, and also runs when any stage fails |
 
 The suite and the smoke test run on the host. They reach the Pods through NodePorts 30084 and 30085.
+
+Both present the client certificate of the Certificate in `caller.yaml`, and each grant names its key. They verify the Pod's Service name, since the NodePort address is not on the Pod's certificate. The smoke test reaches the caller route through a port-forward to the controller's Service.
 
 ## Choosing the fiberd
 
@@ -46,7 +48,7 @@ When a run goes red with no related change, read the fiberd commit on the top li
 
 ## After a failure
 
-Look in `bin/e2e/artifacts`. CI uploads that directory for seven days. It holds the objects, events, logs, zygote logs and audit spools, the suite's output, and the fiberd under test. It never holds a Secret, a grant file or the signing key, which stay in `bin/e2e/private` until `make kind-down`.
+Look in `bin/e2e/artifacts`. CI uploads that directory for seven days. It holds the objects, events, logs, zygote logs and audit spools, the suite's output, and the fiberd under test. It never holds a Secret, a grant file or a private key. The caller's key and the signing key stay in `bin/e2e/private` until `make kind-down`.
 
 The cluster stays up after a failure, so you can look around it.
 

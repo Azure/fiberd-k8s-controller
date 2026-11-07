@@ -2,12 +2,14 @@
 # hooks, and __DIGEST__ is the digest conform.sh read from the node. Each case
 # admits a grant of its own with a warm template, and a run keeps about a dozen
 # until their leases lapse, so the memory limit covers all of them.
+# __THUMBPRINT__ names the key of the conform-caller certificate.
 apiVersion: fiberd.io/v1alpha1
 kind: CapacityGrant
 metadata:
   name: conform
   namespace: conform
 spec:
+  callerThumbprint: "__THUMBPRINT__"
   zygote:
     digest: sha256:c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0c0f0
     command: ["/usr/local/bin/refzygote", "--heap-mb", "16"]

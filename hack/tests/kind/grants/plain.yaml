@@ -1,12 +1,14 @@
 # The grant of the smoke stage. Its image has no test hooks, so fiberd admits
 # only the grant the controller issued to the Pod, the path a real tenant takes.
-# __DIGEST__ is the digest conform.sh read from the node.
+# __DIGEST__ is the digest conform.sh read from the node, and __THUMBPRINT__
+# names the key of the conform-caller certificate.
 apiVersion: fiberd.io/v1alpha1
 kind: CapacityGrant
 metadata:
   name: plain
   namespace: conform
 spec:
+  callerThumbprint: "__THUMBPRINT__"
   zygote:
     digest: sha256:0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a0a1a
     command: ["/usr/local/bin/refzygote", "--heap-mb", "16"]
