@@ -5,6 +5,9 @@ import (
 )
 
 // GrantPolicySpec is what the cluster lets a CapacityGrant ask for.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultRuntimes) || self.defaultRuntimes.all(r, r == 'gvisor' || r == 'hyperlight')",message="defaultRuntimes holds only gvisor and hyperlight, proc and runc need a namespace label",fieldPath=".defaultRuntimes",reason="FieldValueForbidden"
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultRuntimes) || (has(self.runtimes) && self.defaultRuntimes.all(r, r in self.runtimes))",message="defaultRuntimes must sit inside runtimes",fieldPath=".defaultRuntimes",reason="FieldValueInvalid"
 type GrantPolicySpec struct {
 	// images lists the repositories the fiberd container image may come from, each fully
 	// qualified such as ghcr.io/azure/fiberd. An entry matches an image that equals it or
@@ -47,23 +50,23 @@ type GrantPolicySpec struct {
 	// +kubebuilder:validation:items:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 	Registries []string `json:"registries,omitempty"`
 
-	// privilegedNamespaces lists the namespaces whose grants may ask for the gvisor or
-	// hyperlight runtime.
-	// +optional
-	// +listType=set
-	// +kubebuilder:validation:MaxItems=256
-	// +kubebuilder:validation:items:MaxLength=63
-	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	PrivilegedNamespaces []string `json:"privilegedNamespaces,omitempty"`
-
-	// runtimes are the fiberd runtimes a grant may ask for. gvisor and hyperlight also need the
-	// grant's namespace in privilegedNamespaces.
+	// runtimes is the ceiling, the runtimes any grant in the cluster may ask for. A namespace
+	// can never pass it.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=4
-	// +kubebuilder:default={"proc","runc"}
+	// +kubebuilder:default={"hyperlight"}
 	Runtimes []Runtime `json:"runtimes,omitempty"`
+
+	// defaultRuntimes is what a namespace with no exception label may use. It holds only
+	// gvisor and hyperlight, because proc and runc share the host kernel and need the
+	// namespace's exception, and it must sit inside runtimes. A namespace labelled
+	// runtimes.fiberd.io/<runtime>: "true" may also use that runtime, if runtimes holds it.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=2
+	DefaultRuntimes []Runtime `json:"defaultRuntimes,omitempty"`
 }
 
 // GrantPolicy is the cluster's policy for CapacityGrants. The fiberd-grants

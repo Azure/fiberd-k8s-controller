@@ -14,6 +14,8 @@ spec:
   # thumbprint. Put the thumbprint of the public key in the caller's client
   # certificate here, as fiberd's tlsconf.Thumbprint computes it.
   callerThumbprint: NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs
+  # proc must be in the GrantPolicy's runtimes, and the namespace needs the
+  # label runtimes.fiberd.io/proc: "true".
   runtime: proc
   podTemplate:
     spec:

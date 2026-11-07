@@ -15,6 +15,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/yaml"
+
+	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
 
 // grantsPolicyFile is the admission policy that the builder's checks repeat,
@@ -98,6 +100,16 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 	t.Run("guestArgPattern equals GuestArgPattern", func(t *testing.T) {
 		if got, want := policyVariable(t, vap, "guestArgPattern"), "'"+GuestArgPattern+"'"; got != want {
 			t.Errorf("variable guestArgPattern = %s, want %s", got, want)
+		}
+	})
+	t.Run("runtimeLabelPrefix equals LabelRuntimePrefix", func(t *testing.T) {
+		if got, want := policyVariable(t, vap, "runtimeLabelPrefix"), "'"+v1alpha1.LabelRuntimePrefix+"'"; got != want {
+			t.Errorf("variable runtimeLabelPrefix = %s, want %s", got, want)
+		}
+	})
+	t.Run("runtimeLabelValue equals LabelRuntimeValue", func(t *testing.T) {
+		if got, want := policyVariable(t, vap, "runtimeLabelValue"), "'"+v1alpha1.LabelRuntimeValue+"'"; got != want {
+			t.Errorf("variable runtimeLabelValue = %s, want %s", got, want)
 		}
 	})
 }

@@ -125,6 +125,9 @@ type schemaCase struct {
 
 	// rulesNeedFieldPath asks that every rule of the case names a fieldPath.
 	rulesNeedFieldPath bool
+
+	// noDefault asks that the field has no default.
+	noDefault bool
 }
 
 // zygoteRules are the CEL rules on spec.zygote, in marker order.
@@ -168,6 +171,13 @@ const nameRule = "self.metadata.name.size() <= 56"
 
 // grantPolicyNameRule is the CEL rule on the root of a GrantPolicy.
 const grantPolicyNameRule = "self.metadata.name == 'default'"
+
+// grantPolicySpecRules are the CEL rules on a GrantPolicy's spec, in marker
+// order.
+var grantPolicySpecRules = []string{
+	"!has(self.defaultRuntimes) || self.defaultRuntimes.all(r, r == 'gvisor' || r == 'hyperlight')",
+	"!has(self.defaultRuntimes) || (has(self.runtimes) && self.defaultRuntimes.all(r, r in self.runtimes))",
+}
 
 func TestCapacityGrantSchema(t *testing.T) {
 	runSchemaCases(t, loadSchema(t, crdPath), []schemaCase{
@@ -323,6 +333,12 @@ func TestGrantPolicySchema(t *testing.T) {
 			required: []string{"images"},
 		},
 		{
+			name:               "spec carries the defaultRuntimes rules",
+			path:               "spec",
+			rules:              grantPolicySpecRules,
+			rulesNeedFieldPath: true,
+		},
+		{
 			name:     "images is a set",
 			path:     "spec.images",
 			listType: "set",
@@ -374,18 +390,6 @@ func TestGrantPolicySchema(t *testing.T) {
 			maxLength: ptr(int64(255)),
 		},
 		{
-			name:     "privilegedNamespaces is a set",
-			path:     "spec.privilegedNamespaces",
-			listType: "set",
-			maxItems: ptr(int64(256)),
-		},
-		{
-			name:      "privilegedNamespaces items are DNS labels",
-			path:      "spec.privilegedNamespaces.[]",
-			pattern:   "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
-			maxLength: ptr(int64(63)),
-		},
-		{
 			name:     "runtimes is a set",
 			path:     "spec.runtimes",
 			listType: "set",
@@ -393,13 +397,29 @@ func TestGrantPolicySchema(t *testing.T) {
 			maxItems: ptr(int64(4)),
 		},
 		{
-			name:        "runtimes defaults to proc and runc",
+			name:        "runtimes defaults to hyperlight",
 			path:        "spec.runtimes",
-			defaultJSON: `["proc","runc"]`,
+			defaultJSON: `["hyperlight"]`,
 		},
 		{
 			name: "runtimes items are known backends",
 			path: "spec.runtimes.[]",
+			enum: []string{"proc", "runc", "gvisor", "hyperlight"},
+		},
+		{
+			name:     "defaultRuntimes is a set of at most two",
+			path:     "spec.defaultRuntimes",
+			listType: "set",
+			maxItems: ptr(int64(2)),
+		},
+		{
+			name:      "defaultRuntimes has no default",
+			path:      "spec.defaultRuntimes",
+			noDefault: true,
+		},
+		{
+			name: "defaultRuntimes items are known backends",
+			path: "spec.defaultRuntimes.[]",
 			enum: []string{"proc", "runc", "gvisor", "hyperlight"},
 		},
 	})
@@ -460,6 +480,12 @@ func runSchemaCases(t *testing.T, root *apiextensionsv1.JSONSchemaProps, cases [
 				asserted++
 				if got.Default == nil || string(got.Default.Raw) != tc.defaultJSON {
 					t.Errorf("default = %v, want %s", got.Default, tc.defaultJSON)
+				}
+			}
+			if tc.noDefault {
+				asserted++
+				if got.Default != nil {
+					t.Errorf("default = %s, want none", got.Default.Raw)
 				}
 			}
 			if tc.listType != "" {

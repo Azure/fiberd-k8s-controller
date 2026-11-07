@@ -18,10 +18,11 @@ These decisions are closed. State them as facts. A change to one changes this pa
 
 ## GrantPolicy
 
-- `GrantPolicy` is one cluster-scoped object named `default`. It has no per-namespace setting beyond the `privilegedNamespaces` list, and there is no policy object per namespace.
+- `GrantPolicy` is one cluster-scoped object named `default`. There is no policy object per namespace.
 - The API server reads it through the admission policy. The controller never reads it.
-- Every admission list an operator keeps lives there. These are `images`, `helperImages`, `runtimes`, `privilegedNamespaces` and `registries`.
-- This page records the object. It does not settle how runtime policy should work.
+- Every admission list an operator keeps lives there. These are `images`, `helperImages`, `runtimes`, `defaultRuntimes` and `registries`.
+- `runtimes` is the ceiling, and no namespace passes it. `defaultRuntimes` is what a namespace with no label may use, and it holds only `gvisor` and `hyperlight`.
+- A namespace label `runtimes.fiberd.io/<runtime>: "true"` adds one runtime as an exception, if the ceiling holds it.
 
 ## Tenants
 
@@ -37,7 +38,7 @@ These decisions are closed. State them as facts. A change to one changes this pa
 - No `privileged`.
 - Images and helper images by digest, from repositories the `GrantPolicy` lists.
 - A registry zygote only from a registry the `GrantPolicy` lists.
-- A runtime from the set the `GrantPolicy` lists.
+- A runtime the `GrantPolicy`'s ceiling holds, which its default set or a namespace label allows.
 
 The admission policy and the builder both hold the flag, env and mount rules, and a test keeps them equal. A CRD rule and the builder refuse `workingDir` and `privileged`. The digest and list rules hold at admission alone. The [security table](controller.md#security) has the detail.
 

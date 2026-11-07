@@ -41,10 +41,18 @@ func createOwned(t *testing.T, obj client.Object) {
 	})
 }
 
-// namespace creates a tenant namespace for one test.
+// namespace creates a tenant namespace for one test, labelled so that the
+// CapacityGrant sample may run there.
 func namespace(t *testing.T) string {
 	t.Helper()
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "tenant-"}}
+	return namespaceWith(t, runtimeLabels(baselineRuntime))
+}
+
+// namespaceWith creates a tenant namespace for one test that carries labels.
+// Nil labels leave it with no exception.
+func namespaceWith(t *testing.T, labels map[string]string) string {
+	t.Helper()
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "tenant-", Labels: labels}}
 	createOwned(t, ns)
 	return ns.Name
 }
@@ -58,6 +66,24 @@ func restore(t *testing.T, path string) {
 		t.Errorf("read %s: %v", path, err)
 		return
 	}
+	createMissing(t, objs...)
+}
+
+// restoreGrantPolicy is restore for GrantPolicy default, which the suite
+// builds from the sample rather than reads as it stands.
+func restoreGrantPolicy(t *testing.T) {
+	t.Helper()
+	gp, err := baselineGrantPolicy()
+	if err != nil {
+		t.Errorf("build the baseline GrantPolicy: %v", err)
+		return
+	}
+	createMissing(t, gp)
+}
+
+// createMissing creates objs and leaves any that exist.
+func createMissing(t *testing.T, objs ...*unstructured.Unstructured) {
+	t.Helper()
 	for _, obj := range objs {
 		if err := admin.Create(testutil.CleanupContext(t), obj); err != nil && !apierrors.IsAlreadyExists(err) {
 			t.Errorf("recreate %s %s: %v", obj.GetKind(), obj.GetName(), err)
@@ -743,17 +769,11 @@ func TestPolicyRefusals(t *testing.T) {
 			mutate: setPrivileged(false),
 		},
 		{
-			// gvisor also breaks the runtimes rule, and the namespace rule
-			// comes first. TestPolicyPrivilegedNamespace reaches the
-			// runtimes rule.
-			name:   "refuses the gvisor runtime in an unlisted namespace",
+			// TestPolicyRuntimeRules reaches the exception rule.
+			name:   "refuses a runtime outside the ceiling",
 			mutate: setRuntime("gvisor"),
 			reason: metav1.StatusReasonForbidden,
-			substr: privilegedMessage,
-		},
-		{
-			name:   "admits a listed runtime",
-			mutate: setRuntime("runc"),
+			substr: "runtime gvisor " + runtimeListMessage,
 		},
 		{
 			name:   "admits the sample",
@@ -776,58 +796,105 @@ func TestPolicyRefusals(t *testing.T) {
 	}
 }
 
-// TestPolicyPrivilegedNamespace lists one namespace in privilegedNamespaces
-// and checks that it, and no other, passes the namespace rule, and that
-// listing it does not also admit a runtime GrantPolicy default leaves out.
-func TestPolicyPrivilegedNamespace(t *testing.T) {
-	const runtimeNotListed = "runtime gvisor is not listed"
-	listed, unlisted := namespace(t), namespace(t)
-	inListed := readSample(t, listed)
-	setRuntime("gvisor")(t, inListed)
+// TestPolicyRuntimeRules puts gvisor in the ceiling and the default set beside
+// the baseline's hyperlight and proc, and leaves runc out of the ceiling, so
+// each case's namespace and runtime reach one side of the two runtime rules.
+func TestPolicyRuntimeRules(t *testing.T) {
+	bare := namespaceWith(t, nil)
+	labelledProc := namespace(t)
+	labelledRunc := namespaceWith(t, runtimeLabels(v1alpha1.RuntimeRunc))
+	labelledFalse := namespaceWith(t, map[string]string{v1alpha1.RuntimeLabel(v1alpha1.RuntimeProc): "false"})
 
+	byDefault := readSample(t, bare)
+	setRuntime("gvisor")(t, byDefault)
 	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
-		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, listed)
-	}, refused(inListed, metav1.StatusReasonForbidden, privilegedMessage))
-	testutil.Eventually(t, "the namespace rule to pass in "+listed, refused(inListed, metav1.StatusReasonForbidden, runtimeNotListed))
+		s.Runtimes = append(s.Runtimes, v1alpha1.RuntimeGvisor)
+		s.DefaultRuntimes = []v1alpha1.Runtime{v1alpha1.RuntimeGvisor}
+	}, refused(byDefault, metav1.StatusReasonForbidden, "runtime gvisor "+runtimeListMessage))
+	testutil.Eventually(t, "a default runtime to be admitted in "+bare, accepted(byDefault))
 
 	cases := []struct {
-		name   string
-		ns     string
-		mutate mutation
-		reason metav1.StatusReason
+		name    string
+		ns      string
+		runtime v1alpha1.Runtime
+		// substr is empty for a case the policy admits.
 		substr string
 	}{
+		{name: "admits a labelled runtime in the ceiling", ns: labelledProc, runtime: v1alpha1.RuntimeProc},
+		{name: "admits a default runtime with no label", ns: bare, runtime: v1alpha1.RuntimeGvisor},
 		{
-			name:   "refuses gvisor in a namespace GrantPolicy default does not list",
-			ns:     unlisted,
-			mutate: setRuntime("gvisor"),
-			reason: metav1.StatusReasonForbidden,
-			substr: privilegedMessage,
+			name:    "refuses a ceiling runtime with no label",
+			ns:      bare,
+			runtime: v1alpha1.RuntimeProc,
+			substr:  needsLabel(v1alpha1.RuntimeProc, bare),
 		},
 		{
-			// The listed namespace passes the namespace rule, so only the
-			// runtimes rule can refuse gvisor here.
-			name:   "refuses an unlisted runtime in the listed namespace",
-			ns:     listed,
-			mutate: setRuntime("gvisor"),
-			reason: metav1.StatusReasonForbidden,
-			substr: runtimeNotListed,
+			name:    "refuses a labelled runtime outside the ceiling",
+			ns:      labelledRunc,
+			runtime: v1alpha1.RuntimeRunc,
+			substr:  "runtime runc " + runtimeListMessage,
 		},
 		{
-			name:   "refuses a privileged container in the listed namespace",
-			ns:     listed,
-			mutate: setPrivileged(true),
-			reason: metav1.StatusReasonInvalid,
-			substr: privilegedFieldMessage,
+			// This grant breaks both rules, and the ceiling rule comes first.
+			name:    "refuses a runtime outside the ceiling with no label as outside the ceiling",
+			ns:      bare,
+			runtime: v1alpha1.RuntimeRunc,
+			substr:  "runtime runc " + runtimeListMessage,
+		},
+		{
+			name:    "refuses the label value false",
+			ns:      labelledFalse,
+			runtime: v1alpha1.RuntimeProc,
+			substr:  needsLabel(v1alpha1.RuntimeProc, labelledFalse),
+		},
+		{
+			name:    "refuses a label for another runtime",
+			ns:      labelledRunc,
+			runtime: v1alpha1.RuntimeProc,
+			substr:  needsLabel(v1alpha1.RuntimeProc, labelledRunc),
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u := readSample(t, tc.ns)
-			tc.mutate(t, u)
-			expectDenied(t, dryRunCreate(t.Context(), u), tc.reason, tc.substr)
+			setRuntime(string(tc.runtime))(t, u)
+			err := dryRunCreate(t.Context(), u)
+			if tc.substr == "" {
+				if err != nil {
+					t.Fatalf("create: %v, want it admitted", err)
+				}
+				return
+			}
+			expectDenied(t, err, metav1.StatusReasonForbidden, tc.substr)
 		})
 	}
+}
+
+// TestPolicyRuntimeLabelRemoved takes the exception from a namespace under a
+// stored grant. A metadata-only update must still pass, since the controller
+// removes its finalizer that way, and a spec change must not.
+func TestPolicyRuntimeLabelRemoved(t *testing.T) {
+	name := namespace(t)
+	grant := readSample(t, name)
+	createOwned(t, grant)
+
+	ns := &corev1.Namespace{}
+	if err := admin.Get(t.Context(), client.ObjectKey{Name: name}, ns); err != nil {
+		t.Fatalf("get namespace %s: %v", name, err)
+	}
+	base := ns.DeepCopy()
+	delete(ns.Labels, v1alpha1.RuntimeLabel(baselineRuntime))
+	if err := admin.Patch(t.Context(), ns, client.MergeFrom(base)); err != nil {
+		t.Fatalf("remove the label from namespace %s: %v", name, err)
+	}
+
+	substr := needsLabel(baselineRuntime, name)
+	testutil.Eventually(t, "the removed label to stop admitting grants in "+name, refused(readSample(t, name), metav1.StatusReasonForbidden, substr))
+
+	runStoredUpdates(t, grant, []storedUpdate{
+		{name: "admits a label-only update", mutate: setGrantLabel},
+		{name: "refuses a fibers.max change", mutate: setFibersMax(16), reason: metav1.StatusReasonForbidden, substr: substr},
+	})
 }
 
 // TestPolicyHelperImage lets one namespace run hyperlight and lists a
@@ -840,13 +907,11 @@ func TestPolicyHelperImage(t *testing.T) {
 		fiberdRepo = "ghcr.io/azure/fiberd"
 	)
 	helperListMessage := imageListMessage + " in GrantPolicy default spec.helperImages"
-	ns := namespace(t)
+	ns := namespaceWith(t, runtimeLabels(v1alpha1.RuntimeHyperlight))
 	listed := readSample(t, ns)
 	setHelperImage(helperRepo+"@"+testDigest)(t, listed)
 
 	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
-		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, ns)
-		s.Runtimes = append(s.Runtimes, v1alpha1.RuntimeHyperlight)
 		s.HelperImages = []string{helperRepo}
 	}, refused(listed, metav1.StatusReasonForbidden, "helper image "+helperRepo+"@"+testDigest+" "+helperListMessage))
 	testutil.Eventually(t, "a hyperlight grant to be admitted in "+ns, accepted(listed))
@@ -946,15 +1011,13 @@ func TestPolicyHyperlightRegistry(t *testing.T) {
 		helperRepo = "ghcr.io/azure/fiberd-helper"
 		registry   = "registry.example/team-a"
 	)
-	ns := namespace(t)
+	ns := namespaceWith(t, runtimeLabels(v1alpha1.RuntimeHyperlight))
 	grant := readSample(t, ns)
 	setHelperImage(helperRepo+"@"+testDigest)(t, grant)
 	setRegistry(registry)(t, grant)
 	setSealKey("team-a-seal")(t, grant)
 
 	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
-		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, ns)
-		s.Runtimes = append(s.Runtimes, v1alpha1.RuntimeHyperlight)
 		s.HelperImages = []string{helperRepo}
 		s.Registries = []string{registry}
 	}, refused(grant, metav1.StatusReasonForbidden, "registry "+registry+" "+registryListMessage))
@@ -1030,34 +1093,29 @@ func TestPolicyUnchangedSpecUpdate(t *testing.T) {
 	}, accepted(probe))
 	testutil.Eventually(t, "the sample image to be refused under the tightened GrantPolicy", refused(probe, metav1.StatusReasonForbidden, imageListMessage))
 
-	cases := []struct {
-		name   string
-		mutate mutation
-		reason metav1.StatusReason
-		substr string
-	}{
+	runStoredUpdates(t, grant, []storedUpdate{
+		{name: "admits a label-only update", mutate: setGrantLabel},
 		{
-			name: "admits a label-only update",
-			mutate: func(_ *testing.T, u *unstructured.Unstructured) {
-				labels := u.GetLabels()
-				if labels == nil {
-					labels = map[string]string{}
-				}
-				labels["example.com/team"] = "a"
-				u.SetLabels(labels)
-			},
-		},
-		{
-			name: "refuses a fibers.max change under the tightened images",
-			mutate: func(t *testing.T, u *unstructured.Unstructured) {
-				if err := unstructured.SetNestedField(u.Object, int64(16), "spec", "fibers", "max"); err != nil {
-					t.Fatal(err)
-				}
-			},
+			name:   "refuses a fibers.max change under the tightened images",
+			mutate: setFibersMax(16),
 			reason: metav1.StatusReasonForbidden,
 			substr: imageListMessage,
 		},
-	}
+	})
+}
+
+// storedUpdate is one update of a stored grant. reason is empty for an update
+// the policy admits.
+type storedUpdate struct {
+	name   string
+	mutate mutation
+	reason metav1.StatusReason
+	substr string
+}
+
+// runStoredUpdates applies each case to a fresh read of grant.
+func runStoredUpdates(t *testing.T, grant *unstructured.Unstructured, cases []storedUpdate) {
+	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u := &unstructured.Unstructured{}
@@ -1075,6 +1133,24 @@ func TestPolicyUnchangedSpecUpdate(t *testing.T) {
 			}
 			expectDenied(t, err, tc.reason, tc.substr)
 		})
+	}
+}
+
+// setGrantLabel changes only the grant's metadata.
+func setGrantLabel(_ *testing.T, u *unstructured.Unstructured) {
+	labels := u.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels["example.com/team"] = "a"
+	u.SetLabels(labels)
+}
+
+func setFibersMax(limit int64) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		if err := unstructured.SetNestedField(u.Object, limit, "spec", "fibers", "max"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -1105,7 +1181,11 @@ func TestGrantPolicySchema(t *testing.T) {
 		// stored is true for a case that keeps the name default. A create
 		// would then meet the stored object, so it is an update instead.
 		stored bool
-		// substrs must all appear, the field and the rule it broke.
+		// strict sends a create with strict field validation, which the API
+		// server refuses as a bad request while it decodes the object.
+		strict bool
+		// substrs must all appear, the field and the rule it broke. A case
+		// with none must be admitted.
 		substrs []string
 	}{
 		{
@@ -1161,10 +1241,45 @@ func TestGrantPolicySchema(t *testing.T) {
 			stored:  true,
 			substrs: []string{"spec.runtimes", "should have at least 1 items"},
 		},
+		{
+			name:    "refuses proc in defaultRuntimes",
+			mutate:  setGrantPolicyList("defaultRuntimes", string(v1alpha1.RuntimeProc)),
+			stored:  true,
+			substrs: []string{"spec.defaultRuntimes", "defaultRuntimes holds only gvisor and hyperlight"},
+		},
+		{
+			name:    "refuses runc in defaultRuntimes",
+			mutate:  setGrantPolicyList("defaultRuntimes", string(v1alpha1.RuntimeRunc)),
+			stored:  true,
+			substrs: []string{"spec.defaultRuntimes", "defaultRuntimes holds only gvisor and hyperlight"},
+		},
+		{
+			name:    "refuses a default outside runtimes",
+			mutate:  setGrantPolicyList("defaultRuntimes", string(v1alpha1.RuntimeGvisor)),
+			stored:  true,
+			substrs: []string{"spec.defaultRuntimes", "defaultRuntimes must sit inside runtimes"},
+		},
+		{
+			name:   "accepts defaultRuntimes equal to hyperlight",
+			mutate: setGrantPolicyList("defaultRuntimes", string(v1alpha1.RuntimeHyperlight)),
+			stored: true,
+		},
+		{
+			name:   "accepts an empty defaultRuntimes list",
+			mutate: setGrantPolicyList("defaultRuntimes"),
+			stored: true,
+		},
+		{
+			name:    "refuses privilegedNamespaces as an unknown field",
+			mutate:  setGrantPolicyList("privilegedNamespaces", "team-a"),
+			strict:  true,
+			substrs: []string{`unknown field "spec.privilegedNamespaces"`},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var err error
+			reason := metav1.StatusReasonInvalid
 			if tc.stored {
 				u := &unstructured.Unstructured{}
 				u.SetGroupVersionKind(v1alpha1.GroupVersion.WithKind("GrantPolicy"))
@@ -1176,10 +1291,18 @@ func TestGrantPolicySchema(t *testing.T) {
 			} else {
 				u := testutil.ReadSample(t, grantPolicySampleFile)
 				tc.mutate(t, u)
-				err = admin.Create(t.Context(), u, client.DryRunAll)
+				opts := []client.CreateOption{client.DryRunAll}
+				if tc.strict {
+					opts = append(opts, client.FieldValidation(metav1.FieldValidationStrict))
+					reason = metav1.StatusReasonBadRequest
+				}
+				err = admin.Create(t.Context(), u, opts...)
+			}
+			if len(tc.substrs) == 0 && err != nil {
+				t.Fatalf("write: %v, want it admitted", err)
 			}
 			for _, substr := range tc.substrs {
-				expectDenied(t, err, metav1.StatusReasonInvalid, substr)
+				expectDenied(t, err, reason, substr)
 			}
 		})
 	}
@@ -1292,7 +1415,7 @@ func TestGrantPolicyRecovery(t *testing.T) {
 	sample := readSample(t, namespace(t))
 	t.Cleanup(func() {
 		restore(t, grantPoliciesBindingFile)
-		restore(t, grantPolicySampleFile)
+		restoreGrantPolicy(t)
 		testutil.Eventually(t, "deleting GrantPolicy "+grantPolicyName+" to be refused again", guardRefusesDelete)
 		testutil.Eventually(t, "the sample grant to be admitted under the recreated GrantPolicy", accepted(sample))
 	})
@@ -1315,7 +1438,7 @@ func TestGrantPolicyRecovery(t *testing.T) {
 	testutil.Eventually(t, "grants to be refused for want of GrantPolicy "+grantPolicyName,
 		refused(sample, metav1.StatusReasonInvalid, paramNotFoundMessage))
 
-	restore(t, grantPolicySampleFile)
+	restoreGrantPolicy(t)
 	testutil.Eventually(t, "the sample grant to be admitted under the recreated GrantPolicy", accepted(sample))
 
 	restore(t, grantPoliciesBindingFile)

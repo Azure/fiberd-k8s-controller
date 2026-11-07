@@ -14,6 +14,15 @@ const (
 	// ManagedBy is the value every object the controller creates carries under LabelManagedBy.
 	ManagedBy = "fiberd-k8s-controller"
 
+	// LabelRuntimePrefix starts the namespace label that adds one runtime as an exception.
+	// RuntimeLabel spells the whole key. The admission policy repeats the prefix, and a test
+	// keeps the two equal.
+	LabelRuntimePrefix = "runtimes.fiberd.io/"
+
+	// LabelRuntimeValue is the only value of that label that adds the exception. The admission
+	// policy repeats it, and a test keeps the two equal.
+	LabelRuntimeValue = "true"
+
 	// DigestPattern is the form of a zygote digest. The CRD marker on spec.zygote.digest
 	// holds the same pattern. It must stay equal to fiberd's core.TemplateDigestPattern, and a
 	// test checks it.
