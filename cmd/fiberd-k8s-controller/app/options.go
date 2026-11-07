@@ -127,6 +127,8 @@ func (o *Options) AddFlags(fs *flag.FlagSet) {
 		"A grant Pod whose template sets no CPU gets this CPU request and no CPU limit.")
 	fs.StringVar(&o.Template.ServiceAccount, "grant-service-account", o.Template.ServiceAccount,
 		"Every grant Pod runs as this service account.")
+	fs.StringVar(&o.Template.HyperlightDeviceResource, "hyperlight-device-resource", o.Template.HyperlightDeviceResource,
+		"Every hyperlight grant Pod asks for one of this extended resource, the hypervisor device. When it is unset, a tenant brings its own claim.")
 	fs.StringVar(&o.Namespace, "namespace", o.Namespace,
 		"The controller runs in this namespace and holds its leader-election Lease there. It defaults to $"+envPodNamespace+".")
 	fs.BoolVar(&o.LeaderElect, "leader-elect", o.LeaderElect,

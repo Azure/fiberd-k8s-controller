@@ -209,6 +209,13 @@ func TestNeedsExclusiveDevice(t *testing.T) {
 		{name: "extended limit", mod: limits("nvidia.com/gpu"), want: true},
 		{name: "extended request", mod: requests("example.com/fpga"), want: true},
 		{
+			// The builder's device is not in the spec, so it leaves the rolling
+			// strategy alone.
+			name: "hyperlight with no extended resource",
+			mod:  func(cg *v1alpha1.CapacityGrant) { setRuntime(cg, v1alpha1.RuntimeHyperlight) },
+			want: false,
+		},
+		{
 			name: "resource claim",
 			mod: func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.PodTemplate.Spec.ResourceClaims = []corev1.PodResourceClaim{{Name: "gpu", ResourceClaimName: ptr.To("gpu-0")}}

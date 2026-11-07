@@ -85,6 +85,45 @@ func sizeResources(fld *field.Path, in corev1.ResourceRequirements, defaultCPU r
 	return out, nil
 }
 
+// hyperlightDevice returns the extended resource the overlay adds to a Pod
+// of runtime rt, or an empty name when it adds none. Only a hyperlight Pod
+// gets one, and only when the controller names it.
+func hyperlightDevice(rt v1alpha1.Runtime, name string) corev1.ResourceName {
+	if rt != v1alpha1.RuntimeHyperlight {
+		return ""
+	}
+	return corev1.ResourceName(name)
+}
+
+// checkDevice refuses a tenant value for device, which the overlay sets. An
+// empty device leaves the tenant free to write that resource.
+func checkDevice(fld *field.Path, in corev1.ResourceRequirements, device corev1.ResourceName) field.ErrorList {
+	if device == "" {
+		return nil
+	}
+	const why = "the controller sets the hypervisor device"
+	var errs field.ErrorList
+	if _, ok := in.Limits[device]; ok {
+		errs = append(errs, field.Forbidden(fld.Child("limits").Key(string(device)), why))
+	}
+	if _, ok := in.Requests[device]; ok {
+		errs = append(errs, field.Forbidden(fld.Child("requests").Key(string(device)), why))
+	}
+	return errs
+}
+
+// addDevice gives r one unit of device in limits and in requests, since the
+// API server requires the two to match for an extended resource. r comes
+// from sizeResources, so both lists exist. An empty device adds nothing.
+func addDevice(r *corev1.ResourceRequirements, device corev1.ResourceName) {
+	if device == "" {
+		return
+	}
+	one := *resource.NewQuantity(1, resource.DecimalSI)
+	r.Limits[device] = one
+	r.Requests[device] = one.DeepCopy()
+}
+
 // NeedsExclusiveDevice reports whether the template requests an extended
 // resource or a resource claim, which forces the Recreate strategy. A
 // rolling update would start the new Pod while the old one still holds

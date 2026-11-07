@@ -44,5 +44,6 @@ The admission policy and the builder both hold the flag, env and mount rules, an
 
 - proc and runc need an Unconfined seccomp profile, because CRIU cannot dump from under a filter ([fiberd's design](https://github.com/Azure/fiberd/blob/main/docs/design/kubernetes.md)).
 - Capabilities per runtime come from fiberd core's measured sets. The [security table](controller.md#security) says what each runtime runs with.
+- A controller flag can name the hypervisor device's extended resource. When it does, the builder adds one to every hyperlight Pod and a tenant may not write that resource there.
 - No code is trusted on any runtime.
 - Egress is required.

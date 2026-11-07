@@ -218,6 +218,8 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	errs = append(errs, checkEnv(cPath.Child("env"), c.Env)...)
 	errs = append(errs, checkPorts(cPath.Child("ports"), c.Ports)...)
 	errs = append(errs, checkProbes(cPath, c)...)
+	device := hyperlightDevice(rt, opts.HyperlightDeviceResource)
+	errs = append(errs, checkDevice(cPath.Child("resources"), c.Resources, device)...)
 	resources, rErrs := sizeResources(cPath.Child("resources"), c.Resources, opts.DefaultCPU)
 	errs = append(errs, rErrs...)
 	if len(errs) > 0 {
@@ -248,6 +250,7 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	}
 	setProbes(c)
 	c.Resources = resources
+	addDevice(&c.Resources, device)
 	addHelper(&tmpl.Spec, c, rt, cg.Spec.HelperImage)
 	if c.SecurityContext, err = securityContext(c.SecurityContext, rt, c.Args); err != nil {
 		return corev1.PodTemplateSpec{}, err
