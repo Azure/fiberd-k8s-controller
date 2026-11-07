@@ -37,6 +37,11 @@ fiberd_env() {
   source "${FIBERD_ENV_FILE}"
 }
 
+# fiberd_go runs go against the fiberd under test, after fiberd_env.
+fiberd_go() {
+  GOFLAGS="${FIBERD_MODFILE:+-modfile=${FIBERD_MODFILE}}" go "$@"
+}
+
 # docker_build leaves out the attestation manifest. kind cannot load an image
 # that carries one cleanly, and the two grant images start from the other two.
 docker_build() {

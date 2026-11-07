@@ -2,8 +2,8 @@
 # The conform stage. It runs fiberd's own suite from the host against a Pod the
 # controller made. The suite mints its own grants, so it needs the controller's
 # key to pass the Pod's key set check and the image's test hooks to admit its
-# UIDs. It tests fiberd's contract, and the smoke stage tests the controller's
-# minting.
+# UIDs. It binds each grant it mints to the key of -tls-cert. It tests fiberd's
+# contract, and the smoke stage tests the controller's minting.
 
 STAGES+=(conform)
 
@@ -11,8 +11,11 @@ readonly CONFORM_TARGET=127.0.0.1:30084
 readonly CONFORM_BINARY="${PWD}/${E2E_DIR}/grant-conform"
 readonly CONFORM_LOG="${ARTIFACTS_DIR}/conform.log"
 
+# The name the Pod's certificate carries, since the NodePort is not on it.
+readonly CONFORM_SERVER_NAME="fiberd-conform.${GRANT_NAMESPACE}.svc"
+
 # The issuer every grant Pod verifies against, config/manager's --issuer-url.
-readonly ISSUER_URL=https://fiberd-k8s-controller.fiberd-system.svc:8443
+readonly ISSUER_URL="https://${ISSUER_HOST}:${ISSUER_PORT}"
 readonly KEY_SECRET=grant-issuer-key
 
 # The suite skips a case with no hook and still passes, so a green run can hide
@@ -67,6 +70,10 @@ stage_conform() {
 
   "${CONFORM_BINARY}" -test.v -test.timeout=20m \
     -target "${CONFORM_TARGET}" \
+    -tls-ca "${CALLER_DIR}/ca.crt" \
+    -tls-cert "${CALLER_DIR}/tls.crt" \
+    -tls-key "${CALLER_DIR}/tls.key" \
+    -tls-server-name "${CONFORM_SERVER_NAME}" \
     -target-tier FIBER_CHECKPOINT \
     -node-id "${pod}" \
     -template "${template}" \

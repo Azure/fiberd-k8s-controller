@@ -9,8 +9,9 @@ readonly CLUSTER=fiberd-e2e
 readonly E2E_DIR=bin/e2e
 readonly FIBERD_ENV_FILE="${E2E_DIR}/fiberd.env"
 
-# What must never reach the artifacts, the signing key and the Pod's grant.
+# What must never reach the artifacts, the signing key and the caller's key.
 readonly PRIVATE_DIR="${E2E_DIR}/private"
+readonly CALLER_DIR="${PRIVATE_DIR}/caller"
 readonly ARTIFACTS_DIR="${E2E_DIR}/artifacts"
 
 readonly GRANT_NAMESPACE=conform

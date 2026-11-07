@@ -1,9 +1,11 @@
 # The tenant namespace of both grants. It exists before the chart installs,
 # since the chart binds into it. proc grant Pods run with Unconfined profiles,
-# which only the privileged Pod Security level admits.
+# which only the privileged Pod Security level admits. The runtimes label asks
+# for proc in this namespace.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: conform
   labels:
     pod-security.kubernetes.io/enforce: privileged
+    runtimes.fiberd.io/proc: "true"
