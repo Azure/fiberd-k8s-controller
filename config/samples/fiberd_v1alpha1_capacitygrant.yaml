@@ -22,7 +22,7 @@ spec:
         # A placeholder for the tenant's image, fiberd's image with the
         # zygote program added. The controller sets no default. The
         # admission policy requires a digest and a repository the GrantPolicy
-        # named default lists. Its fiberd must be at Azure/fiberd de4ca4e or
+        # named default lists. Its fiberd must be at Azure/fiberd aa8e259 or
         # later, which no release holds yet, so neither the tag nor the
         # digest names a real image.
         image: ghcr.io/azure/fiberd:0.4.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
