@@ -26,10 +26,12 @@ type PodIdentity struct {
 	Name string
 }
 
-// GrantFromSpec builds the grant fiberd will verify for one Pod of cg. now
-// and lease fix the lease expiry, which is cut to whole seconds because
-// the token's exp claim holds whole seconds. Issuer is left empty because
-// grant.Issuer.Mint sets it. cg is never modified.
+// GrantFromSpec builds the grant fiberd will verify for one Pod of cg.
+// exception says whether the namespace holds the exception for the runtime
+// of cg, which only proc and runc read. now and lease fix the lease expiry,
+// which is cut to whole seconds because the token's exp claim holds whole
+// seconds. Issuer is left empty because grant.Issuer.Mint sets it. cg is
+// never modified.
 //
 // GrantFromSpec maps fields and leaves the rules a grant must follow to
 // core.Grant.Validate, so the controller and every other issuer refuse the
@@ -45,7 +47,7 @@ type PodIdentity struct {
 // grant. fiberd measures the lease from the iat claim, which the Issuer
 // sets at mint time, so a now ahead of that clock makes the lease fiberd
 // sees longer than lease.
-func GrantFromSpec(cg *v1alpha1.CapacityGrant, pod PodIdentity, now time.Time, lease time.Duration) (core.Grant, error) {
+func GrantFromSpec(cg *v1alpha1.CapacityGrant, pod PodIdentity, exception bool, now time.Time, lease time.Duration) (core.Grant, error) {
 	if cg == nil {
 		return core.Grant{}, fmt.Errorf("issuer: %w", field.Required(field.NewPath("capacityGrant"), "the CapacityGrant is nil"))
 	}
@@ -71,7 +73,7 @@ func GrantFromSpec(cg *v1alpha1.CapacityGrant, pod PodIdentity, now time.Time, l
 	}
 	writeBudget, budgetErrs := budgetBytes(specPath.Child("writeBudget"), spec.WriteBudget)
 	errs = append(errs, budgetErrs...)
-	isolation, rtErrs := isolationFor(specPath.Child("runtime"), spec.Runtime)
+	isolation, rtErrs := isolationFor(specPath.Child("runtime"), spec.Runtime, exception)
 	errs = append(errs, rtErrs...)
 	// fiberd measures the lease from the iat claim, and both claims hold
 	// whole seconds. A fractional lease can then come out one second
@@ -158,17 +160,21 @@ func budgetBytes(fld *field.Path, q *resource.Quantity) (uint64, field.ErrorList
 	return uint64(n), nil
 }
 
-// isolationFor says whether a runtime keeps fibers off the host kernel.
-// gVisor and Hyperlight do, so they may run untrusted code. proc and runc
-// share the host kernel and are only for trusted code. An unset runtime
-// is refused instead of read as proc, because the API server always
-// defaults it and an object without it skipped admission.
-func isolationFor(fld *field.Path, r v1alpha1.Runtime) (core.Isolation, field.ErrorList) {
+// isolationFor says how far the issuer trusts a grant of runtime r. gVisor
+// and Hyperlight keep fibers off the host kernel, so their grants are always
+// Untrusted. proc and runc share the host kernel, so their grants are Trusted
+// only with the namespace's exception, and fiberd refuses them Untrusted. An
+// unset runtime is refused instead of read as proc, because the API server
+// always defaults it and an object without it skipped admission.
+func isolationFor(fld *field.Path, r v1alpha1.Runtime, exception bool) (core.Isolation, field.ErrorList) {
 	switch r {
 	case v1alpha1.RuntimeGvisor, v1alpha1.RuntimeHyperlight:
 		return core.Untrusted, nil
 	case v1alpha1.RuntimeProc, v1alpha1.RuntimeRunc:
-		return core.Trusted, nil
+		if exception {
+			return core.Trusted, nil
+		}
+		return core.Untrusted, nil
 	case "":
 		return core.IsolationUnspecified, field.ErrorList{field.Required(fld, "")}
 	default:

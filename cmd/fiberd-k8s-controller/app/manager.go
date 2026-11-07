@@ -45,10 +45,11 @@ import (
 // Secret. A marker cannot name a constant, so the name repeats
 // issuer.KeySecretName and a test pins the two together.
 //
-// The grant route reviews a Pod's token and walks its owners. Those rules
-// sit here because the Makefile generates the controller's roles from this
-// package and pkg/controller. A marker in pkg/workload would land on the
-// tenant role, and one in pkg/issuer would land nowhere.
+// The grant route reviews a Pod's token and walks its owners, and the issuer
+// reads a Namespace and the GrantPolicy to decide trust. Those rules sit here
+// because the Makefile generates the controller's roles from this package
+// and pkg/controller. A marker in pkg/workload would land on the tenant role,
+// and one in pkg/issuer would land nowhere.
 //
 // +kubebuilder:rbac:groups=coordination.k8s.io,namespace=fiberd-system,resources=leases,verbs=get;create;update
 // +kubebuilder:rbac:groups="",namespace=fiberd-system,resources=events,verbs=create;patch
@@ -57,6 +58,8 @@ import (
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get
+// +kubebuilder:rbac:groups=fiberd.io,resources=grantpolicies,verbs=get
 
 const (
 	// LeaderElectionID names the Lease the replicas compete for.

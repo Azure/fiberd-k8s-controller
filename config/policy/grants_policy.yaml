@@ -3,8 +3,8 @@
 # reach past that overlay. Its parameter is the GrantPolicy named default.
 # The builder repeats the checks on the grant alone at reconcile time, since
 # a grant stored before a rule existed must still not reach a Pod. The
-# controller never reads the GrantPolicy, so the rules on its lists hold at
-# admission only.
+# issuer reads the GrantPolicy to decide trust alone, and the rules on its
+# lists still hold at admission only.
 #
 # Runs on Kubernetes 1.30 and later. The CEL used here is core CEL, the
 # strings extension and macros, all present since 1.30.
@@ -127,13 +127,25 @@ spec:
     # devices or the sandbox, which the Pod-level rules otherwise prevent.
     - name: reservedKeyPrefixes
       expression: "['fiberd.io/', 'container.apparmor.security.beta.kubernetes.io/', 'seccomp.security.alpha.kubernetes.io/', 'container.seccomp.security.alpha.kubernetes.io/', 'k8s.v1.cni.cncf.io/', 'cni.projectcalico.org/', 'io.kubernetes.cri-o.', 'dev.gvisor.', 'io.katacontainers.']"
-    # These runtimes are allowed only in a namespace the GrantPolicy lists.
-    - name: privilegedRuntimes
-      expression: "['gvisor', 'hyperlight']"
     # The CRD defaults runtimes, so the guard only keeps an object written
     # past the schema from erroring the policy. Absent means none.
     - name: runtimes
       expression: "has(params.spec.runtimes) ? params.spec.runtimes : []"
+    # What a namespace with no exception label may use. Absent means none.
+    - name: defaultRuntimes
+      expression: "has(params.spec.defaultRuntimes) ? params.spec.defaultRuntimes : []"
+    # The namespace label that adds one runtime as an exception. A test keeps
+    # the prefix and value equal to v1alpha1's LabelRuntimePrefix and
+    # LabelRuntimeValue.
+    - name: runtimeLabelPrefix
+      expression: "'runtimes.fiberd.io/'"
+    - name: runtimeLabelValue
+      expression: "'true'"
+    - name: runtimeLabel
+      expression: "has(object.spec.runtime) ? variables.runtimeLabelPrefix + object.spec.runtime : ''"
+    # Any value other than runtimeLabelValue is no exception.
+    - name: runtimeExcepted
+      expression: "has(namespaceObject.metadata.labels) && variables.runtimeLabel in namespaceObject.metadata.labels && namespaceObject.metadata.labels[variables.runtimeLabel] == variables.runtimeLabelValue"
   validations:
     # A flag and its value are one item, so no tenant item can be read as the
     # value of another. The pattern is podtemplate.ArgPattern.
@@ -215,10 +227,14 @@ spec:
       messageExpression: "'mount path ' + variables.outsidePaths[0] + ' must be at or under ' + variables.mountRoots.join(', ')"
       message: "a mountPath, devicePath or terminationMessagePath is outside the directories a tenant may mount in"
       reason: Forbidden
-    - expression: "!(has(object.spec.runtime) && object.spec.runtime in variables.privilegedRuntimes) || (has(params.spec.privilegedNamespaces) && object.metadata.namespace in params.spec.privilegedNamespaces)"
-      message: "the gvisor and hyperlight runtimes are allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
-      reason: Forbidden
     - expression: "has(object.spec.runtime) && object.spec.runtime in variables.runtimes"
       messageExpression: "has(object.spec.runtime) ? 'runtime ' + object.spec.runtime + ' is not listed in GrantPolicy default spec.runtimes' : 'spec.runtime is required'"
       message: "spec.runtime must be listed in GrantPolicy default spec.runtimes"
+      reason: Forbidden
+    # The first refusal is the one reported, so this rule follows the ceiling
+    # rule. A runtime outside the ceiling hears that, not advice about a label
+    # that cannot help.
+    - expression: "(has(object.spec.runtime) && object.spec.runtime in variables.defaultRuntimes) || variables.runtimeExcepted"
+      messageExpression: "has(object.spec.runtime) ? 'runtime ' + object.spec.runtime + ' needs the label ' + variables.runtimeLabel + '=' + variables.runtimeLabelValue + ' on namespace ' + object.metadata.namespace : 'spec.runtime is required'"
+      message: "a runtime outside GrantPolicy default spec.defaultRuntimes needs the label runtimes.fiberd.io/<runtime>=true on its namespace"
       reason: Forbidden

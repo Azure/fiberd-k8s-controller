@@ -24,6 +24,11 @@ const (
 	RuntimeHyperlight Runtime = "hyperlight"
 )
 
+// RuntimeLabel returns the key of the namespace label that adds rt as an exception.
+func RuntimeLabel(rt Runtime) string {
+	return LabelRuntimePrefix + string(rt)
+}
+
 // CapacityGrantSpec describes the capacity a tenant asks for and the Pod that holds it.
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",message="helperImage is allowed only for runtime hyperlight",fieldPath=".helperImage",reason="FieldValueForbidden"

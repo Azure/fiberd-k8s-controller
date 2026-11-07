@@ -55,11 +55,12 @@ var (
 	// fiberd-ca policies match.
 	certManagerCRDs = filepath.Join("testdata", "cert-manager-crds.yaml")
 
-	// policyFiles are what config/policy, the fiberd-ca policies of
-	// config/certs and the GrantPolicy sample install, in an order where
-	// each object finds what it names.
+	// policyFiles are what config/policy and the fiberd-ca policies of
+	// config/certs install, in an order where each object finds what it
+	// names. GrantPolicy default is not among them, because
+	// baselineGrantPolicy is the one way the suite installs it.
 	policyFiles = []string{
-		grantsPolicyFile, grantsBindingFile, grantPoliciesPolicyFile, grantPoliciesBindingFile, grantPolicySampleFile,
+		grantsPolicyFile, grantsBindingFile, grantPoliciesPolicyFile, grantPoliciesBindingFile,
 		caRequestsPolicyFile, caRequestsBindingFile, caCertificatesPolicyFile, caCertificatesBindingFile, caPodsPolicyFile, caPodsBindingFile,
 	}
 )
@@ -78,18 +79,27 @@ const (
 	// grantPolicyName is the one GrantPolicy the fiberd-grants binding reads.
 	grantPolicyName = "default"
 
+	// baselineRuntime is the runtime the CapacityGrant sample asks for. The
+	// suite adds it to the ceiling and labels its namespaces for it.
+	baselineRuntime = v1alpha1.RuntimeProc
+
 	// The messages below are cut from config/policy, so a reworded rule
 	// fails here rather than passing on another rule's refusal.
 	envNameMessage     = "must match ^FIBERD_TENANT_[A-Z0-9_]+$"
 	volumeMessage      = "is not an emptyDir, configMap"
 	imageListMessage   = "is not under a repository listed"
-	privilegedMessage  = "are allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
 	deleteGuardMessage = "update it instead of deleting it"
 	uncleanMessage     = "is not a clean absolute path"
 	outsideMessage     = "must be at or under /config, /data, /secrets"
 
 	// registryListMessage is how the spec.registries rule ends its refusal.
 	registryListMessage = imageListMessage + " in GrantPolicy default spec.registries"
+
+	// runtimeListMessage is how the ceiling rule ends its refusal.
+	runtimeListMessage = "is not listed in GrantPolicy default spec.runtimes"
+
+	// runtimeLabelMessage is how the exception rule starts naming the label.
+	runtimeLabelMessage = "needs the label"
 
 	// privilegedFieldMessage is cut from the CRD rule on podTemplate. The API
 	// server runs that rule before any admission policy, in every namespace.
@@ -167,7 +177,11 @@ func setUp(cfg *rest.Config) error {
 	if err != nil {
 		return err
 	}
-	for _, obj := range objs {
+	baseline, err := baselineGrantPolicy()
+	if err != nil {
+		return err
+	}
+	for _, obj := range append(objs, baseline) {
 		if err := admin.Create(ctx, obj); err != nil {
 			return fmt.Errorf("create %s %s: %w", obj.GetKind(), obj.GetName(), err)
 		}
@@ -182,7 +196,7 @@ func setUp(cfg *rest.Config) error {
 // typeChecking status is written by kube-controller-manager, which envtest
 // does not run, so the cases that follow are the type check.
 func waitEnforced(ctx context.Context) error {
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "policy-probe-"}}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "policy-probe-", Labels: runtimeLabels(baselineRuntime)}}
 	if err := admin.Create(ctx, ns); err != nil {
 		return fmt.Errorf("create the probe namespace: %w", err)
 	}
@@ -229,6 +243,35 @@ func waitEnforced(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// baselineGrantPolicy returns what the suite runs under, config/samples'
+// GrantPolicy with baselineRuntime added to its ceiling. The bare sample
+// refuses the CapacityGrant sample, so the bootstrap and every restore go
+// through here. A case that wants the bare sample reads it by name.
+func baselineGrantPolicy() (*unstructured.Unstructured, error) {
+	u, err := testutil.ReadObject(grantPolicySampleFile)
+	if err != nil {
+		return nil, err
+	}
+	runtimes, _, err := unstructured.NestedStringSlice(u.Object, "spec", "runtimes")
+	if err != nil {
+		return nil, err
+	}
+	if err := unstructured.SetNestedStringSlice(u.Object, append(runtimes, string(baselineRuntime)), "spec", "runtimes"); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// runtimeLabels returns the namespace labels that add rt as an exception.
+func runtimeLabels(rt v1alpha1.Runtime) map[string]string {
+	return map[string]string{v1alpha1.RuntimeLabel(rt): v1alpha1.LabelRuntimeValue}
+}
+
+// needsLabel is the exception rule's whole refusal of rt in ns.
+func needsLabel(rt v1alpha1.Runtime, ns string) string {
+	return fmt.Sprintf("runtime %s %s %s=%s on namespace %s", rt, runtimeLabelMessage, v1alpha1.RuntimeLabel(rt), v1alpha1.LabelRuntimeValue, ns)
 }
 
 // readSample returns config/samples' CapacityGrant in ns with a generated

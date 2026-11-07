@@ -6,15 +6,17 @@ image:
 
 # The whole spec of the GrantPolicy named default, the only one the admission
 # policy reads. Each images entry is a repository and matches images under it
-# with any tag. privilegedNamespaces and registries stay unset, so no grant may
-# run a privileged fiberd container or pull its zygote until an admin lists
-# them.
+# with any tag. runtimes is the cluster's ceiling. defaultRuntimes stays unset,
+# so a namespace may use nothing until it carries
+# runtimes.fiberd.io/<runtime>: "true", and that label never passes the
+# ceiling. registries stays unset, so no grant may pull its zygote until an
+# admin lists it.
 grantPolicy:
   images:
     - ghcr.io/azure/fiberd
     - ghcr.io/azure/fiberd-runc
     - ghcr.io/azure/fiberd-gvisor
-  runtimes: [proc, runc]
+  runtimes: [hyperlight]
 
 # One entry per tenant namespace, each with the group whose members may write
 # CapacityGrants there. The namespace must already exist, since its Pod

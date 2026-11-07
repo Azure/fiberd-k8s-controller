@@ -20,6 +20,16 @@ func TestValidateSpec(t *testing.T) {
 			name: "a valid spec passes",
 		},
 		{
+			// ValidateSpec passes no exception, and that must not refuse a
+			// runtime, since trust does not change what a spec may be.
+			name:   "proc passes with no exception",
+			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeProc },
+		},
+		{
+			name:   "runc passes with no exception",
+			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc },
+		},
+		{
 			// ParseQuantity clamps 16Ei to MaxInt64 without an error, and the
 			// mapping refuses it rather than carry a clamped budget.
 			name:    "a write budget that overflows is refused",

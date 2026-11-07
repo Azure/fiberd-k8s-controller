@@ -1,10 +1,11 @@
 # Only the GrantPolicy named default is read. Each images entry is a
 # repository and matches images under it with any tag. The gvisor
-# repository is listed for the day gvisor joins runtimes. privilegedNamespaces
-# is empty on purpose, so no grant may ask for the gvisor or hyperlight runtime
-# until an admin names its namespace. registries is unset on purpose too, so
-# no grant may pull its zygote until an admin lists the repository, as
-# ghcr.io/team-a or, for plain HTTP, http://registry.local:5000/zygotes.
+# repository is listed for the day gvisor joins runtimes. runtimes is the
+# cluster's ceiling. defaultRuntimes is unset, so a namespace may use nothing
+# until it carries runtimes.fiberd.io/<runtime>: "true", and that label never
+# passes the ceiling. registries is unset on purpose, so no grant may pull its
+# zygote until an admin lists the repository, as ghcr.io/team-a or, for plain
+# HTTP, http://registry.local:5000/zygotes.
 apiVersion: fiberd.io/v1alpha1
 kind: GrantPolicy
 metadata:
@@ -14,4 +15,4 @@ spec:
     - ghcr.io/azure/fiberd
     - ghcr.io/azure/fiberd-runc
     - ghcr.io/azure/fiberd-gvisor
-  runtimes: [proc, runc]
+  runtimes: [hyperlight]

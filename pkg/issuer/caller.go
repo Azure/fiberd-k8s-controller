@@ -118,13 +118,17 @@ func (h *Handler) serveCallerGrants(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	exception, err := h.holdsException(ctx, cg)
+	if err != nil {
+		return nil, err
+	}
 
 	answer := callerGrantsAnswer{
 		ServerName: podtemplate.ServiceHost(workload.ObjectName(cg), cg.Namespace),
 		Grants:     make([]callerGrant, 0, len(pods)),
 	}
 	for _, pod := range pods {
-		g, err := h.callerGrant(cg, pod, now)
+		g, err := h.callerGrant(cg, pod, exception, now)
 		if err != nil {
 			return nil, err
 		}
@@ -216,9 +220,10 @@ func (h *Handler) runningPods(ctx context.Context, cg *v1alpha1.CapacityGrant, a
 // older spec accepts this grant too, unless it names another caller. A
 // callerThumbprint change therefore moves callers only to new Pods. It
 // rolls the Deployment, and an old Pod refuses the grant minted here for
-// the new key until the rollout replaces it.
-func (h *Handler) callerGrant(cg *v1alpha1.CapacityGrant, pod *corev1.Pod, now time.Time) (callerGrant, error) {
-	g, err := GrantFromSpec(cg, PodIdentity{UID: string(pod.UID), Name: pod.Name}, now, h.lease)
+// the new key until the rollout replaces it. exception is what
+// holdsException said of cg.
+func (h *Handler) callerGrant(cg *v1alpha1.CapacityGrant, pod *corev1.Pod, exception bool, now time.Time) (callerGrant, error) {
+	g, err := GrantFromSpec(cg, PodIdentity{UID: string(pod.UID), Name: pod.Name}, exception, now, h.lease)
 	if err != nil {
 		return callerGrant{}, refuse(http.StatusUnprocessableEntity, reasonInvalidSpec, err)
 	}

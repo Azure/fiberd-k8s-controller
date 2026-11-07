@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Azure/fiberd/pkg/core"
 	"github.com/Azure/fiberd/pkg/grant"
 	"github.com/Azure/fiberd/pkg/tlsconf/tlsconftest"
 
@@ -107,6 +108,47 @@ func TestCallerGrantRoute(t *testing.T) {
 		t.Fatalf("delete Pod %s: %v", oldPod.Name, err)
 	}
 	waitForCallerGrants(t, caller, body, newPod)
+}
+
+// TestCallerGrantIsolation runs a caller's grant for a proc Pod through the
+// manager's own client and role. The GrantPolicy holds proc in every case,
+// so the label alone decides.
+func TestCallerGrantIsolation(t *testing.T) {
+	waitForProbe(t, "/readyz")
+
+	cases := []struct {
+		name     string
+		labelled bool
+		want     core.Isolation
+	}{
+		{name: "a proc grant in a labelled namespace signs TRUSTED", labelled: true, want: core.Trusted},
+		{name: "a proc grant with no label signs UNTRUSTED", want: core.Untrusted},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			createGrantPolicy(t, v1alpha1.RuntimeProc)
+			caller := fiberdCA.Client(t, "caller")
+			ns := tenantNamespace(t, true)
+			onboardGrantAccount(t, ns)
+			if tc.labelled {
+				labelRuntime(t, ns, v1alpha1.RuntimeProc)
+			}
+			cg := newGrant(ns, "isolation")
+			cg.Spec.CallerThumbprint = caller.Thumbprint(t)
+			if err := admin.Create(t.Context(), cg); err != nil {
+				t.Fatalf("create CapacityGrant: %v", err)
+			}
+			d, _ := waitForObjects(t, cg)
+			pod := newReplicaSet(t, d, 1).pod(t, "fiberd-isolation-1-aaaaa", nil)
+			running(t, pod, "10.244.0.20")
+
+			answer := waitForCallerGrants(t, caller, fmt.Sprintf(`{"namespace":%q,"name":%q}`, ns, cg.Name), pod)
+
+			if g := verifyGrant(t, answer.Grants[0].Token, pod.Name); g.Policy.Isolation != tc.want {
+				t.Errorf("isolation = %s, want %s", g.Policy.Isolation, tc.want)
+			}
+		})
+	}
 }
 
 // running sets the status a kubelet would report for pod once it runs at

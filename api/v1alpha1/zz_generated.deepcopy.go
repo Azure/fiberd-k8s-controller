@@ -204,13 +204,13 @@ func (in *GrantPolicySpec) DeepCopyInto(out *GrantPolicySpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.PrivilegedNamespaces != nil {
-		in, out := &in.PrivilegedNamespaces, &out.PrivilegedNamespaces
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.Runtimes != nil {
 		in, out := &in.Runtimes, &out.Runtimes
+		*out = make([]Runtime, len(*in))
+		copy(*out, *in)
+	}
+	if in.DefaultRuntimes != nil {
+		in, out := &in.DefaultRuntimes, &out.DefaultRuntimes
 		*out = make([]Runtime, len(*in))
 		copy(*out, *in)
 	}
