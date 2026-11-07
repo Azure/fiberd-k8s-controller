@@ -4,12 +4,14 @@
 //	go tool -modfile=hack/tools/go.mod controller-gen ...
 //	go tool -modfile=hack/tools/go.mod golangci-lint ...
 //	go tool -modfile=hack/tools/go.mod setup-envtest ...
+//	go tool -modfile=hack/tools/go.mod crane ...
 module github.com/Azure/fiberd-k8s-controller/hack/tools
 
 go 1.27.3
 
 tool (
 	github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+	github.com/google/go-containerregistry/cmd/crane
 	sigs.k8s.io/controller-runtime/tools/setup-envtest
 	sigs.k8s.io/controller-tools/cmd/controller-gen
 	sigs.k8s.io/kustomize/kustomize/v5
@@ -75,6 +77,8 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
+	github.com/docker/cli v29.7.2+incompatible // indirect
+	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
@@ -117,6 +121,7 @@ require (
 	github.com/golangci/unconvert v0.0.0-20250410112200-a129a6e6413e // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/gordonklaus/ineffassign v0.2.0 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
 	github.com/gostaticanalysis/comment v1.5.0 // indirect
@@ -135,6 +140,7 @@ require (
 	github.com/karamaru-alpha/copyloopvar v1.2.2 // indirect
 	github.com/kisielk/errcheck v1.30.0 // indirect
 	github.com/kkHAIKE/contextcheck v1.1.6 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/kulti/thelper v0.7.1 // indirect
 	github.com/kunwardeep/paralleltest v1.0.16 // indirect
 	github.com/ldez/exptostd v0.4.5 // indirect
@@ -168,6 +174,8 @@ require (
 	github.com/nishanths/exhaustive v0.15.0 // indirect
 	github.com/nishanths/predeclared v0.3.0 // indirect
 	github.com/nunnatsa/ginkgolinter v0.24.0 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/prometheus/client_golang v1.24.0 // indirect
@@ -246,6 +254,7 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gotest.tools/v3 v3.5.2 // indirect
 	honnef.co/go/tools v0.8.2 // indirect
 	k8s.io/api v0.37.0 // indirect
 	k8s.io/apiextensions-apiserver v0.37.0 // indirect
