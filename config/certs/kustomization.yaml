@@ -1,8 +1,16 @@
 # The CA sits in cert-manager, the namespace a ClusterIssuer reads its
-# Secret from. The controller and every grant Pod chain to it.
+# Secret from. The controller and every grant Pod chain to it. The
+# admission policies hold what fiberd-ca issues to a serving leaf and a
+# client leaf.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - issuer.yaml
   - ca_certificate.yaml
   - cluster_issuer.yaml
+  - ca_requests_policy.yaml
+  - ca_requests_policy_binding.yaml
+  - ca_certificates_policy.yaml
+  - ca_certificates_policy_binding.yaml
+  - ca_pods_policy.yaml
+  - ca_pods_policy_binding.yaml

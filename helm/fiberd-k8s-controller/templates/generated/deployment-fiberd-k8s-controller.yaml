@@ -37,6 +37,7 @@ spec:
         - --health-probe-bind-address=:8081
         - --tls-cert-file=/var/run/fiberd/tls/tls.crt
         - --tls-private-key-file=/var/run/fiberd/tls/tls.key
+        - --client-ca-file=/var/run/fiberd/tls/ca.crt
         env:
         - name: POD_NAMESPACE
           valueFrom:

@@ -51,8 +51,10 @@ spec:
               callerThumbprint:
                 description: |-
                   callerThumbprint is the RFC 7638 thumbprint of the public key in the one client
-                  certificate allowed to present the grant. A home serving mutual TLS refuses a grant
-                  without it.
+                  certificate allowed to present the grant, the base64url SHA-256 of the key's canonical
+                  JWK without padding, which fiberd carries as the grant's cnf jkt. A renewed certificate
+                  over the same key keeps it. A grant Pod serves mutual TLS only and refuses a grant bound
+                  to no caller, so a grant needs one.
                 pattern: ^[A-Za-z0-9_-]{43}$
                 type: string
               fibers:
@@ -9076,8 +9078,9 @@ spec:
                       registry is the OCI repository fiberd pulls the zygote artifact from by digest, such
                       as ghcr.io/team-a/zygotes, or http://registry.local:5000/zygotes for plain HTTP. It
                       is the value of fiberd's -registry flag. GrantPolicy spec.registries must list it, and
-                      fiberd pulls anonymously, so the repository must be public. Runtime hyperlight does not
-                      take it yet, since its helper would not run the pulled executable.
+                      fiberd pulls anonymously, so the repository must be public. On runtime hyperlight the
+                      artifact is a sealed Hyperlight snapshot that the helper restores, which needs
+                      sealKeySecretName, a helper that advertises template-dir, and fiberd with Azure/fiberd#101.
                     maxLength: 255
                     pattern: ^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$
                     type: string
@@ -9099,6 +9102,7 @@ spec:
                     be set
                   rule: has(self.command) != has(self.registry)
             required:
+            - callerThumbprint
             - fibers
             - podTemplate
             - zygote
@@ -9114,12 +9118,12 @@ spec:
                 without its helper
               reason: FieldValueRequired
               rule: '!has(self.runtime) || self.runtime != ''hyperlight'' || has(self.helperImage)'
-            - fieldPath: .zygote.registry
-              message: zygote.registry is not allowed for runtime hyperlight, which
-                does not run a pulled zygote yet
-              reason: FieldValueForbidden
+            - fieldPath: .zygote.sealKeySecretName
+              message: runtime hyperlight with zygote.registry needs zygote.sealKeySecretName,
+                the pulled snapshot is sealed
+              reason: FieldValueRequired
               rule: '!has(self.zygote.registry) || !has(self.runtime) || self.runtime
-                != ''hyperlight'''
+                != ''hyperlight'' || has(self.zygote.sealKeySecretName)'
           status:
             description: status is the observed state of the grant.
             properties:

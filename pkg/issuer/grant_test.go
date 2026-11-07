@@ -127,11 +127,6 @@ func TestGrantFromSpec(t *testing.T) {
 			want:   func(g *core.Grant) { g.CallerThumbprint = "abc-_XYZ" + strings.Repeat("0", 35) },
 		},
 		{
-			name:   "no thumbprint",
-			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.CallerThumbprint = "" },
-			want:   func(g *core.Grant) { g.CallerThumbprint = "" },
-		},
-		{
 			name:   "nil writeBudget is unlimited",
 			mutate: func(cg *v1alpha1.CapacityGrant) { cg.Spec.WriteBudget = nil },
 			want:   func(g *core.Grant) { g.WBudgetBytes = 0 },
@@ -306,6 +301,12 @@ func TestGrantFromSpecMappingErrors(t *testing.T) {
 			wantErr: []string{"spec.writeBudget: Invalid value"},
 		},
 		{
+			// A grant Pod serves mutual TLS only and refuses an unbound grant.
+			name:    "no caller thumbprint",
+			mutate:  func(cg *v1alpha1.CapacityGrant) { cg.Spec.CallerThumbprint = "" },
+			wantErr: []string{"spec.callerThumbprint: Required value"},
+		},
+		{
 			name:    "unknown runtime",
 			mutate:  func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = "kata" },
 			wantErr: []string{"spec.runtime: Unsupported value"},
@@ -338,6 +339,7 @@ func TestGrantFromSpecMappingErrors(t *testing.T) {
 			mutate: func(cg *v1alpha1.CapacityGrant) {
 				cg.Namespace = ""
 				cg.Spec.Fibers = v1alpha1.FiberBudget{Max: 0}
+				cg.Spec.CallerThumbprint = ""
 				cg.Spec.WriteBudget = quantity("-1")
 				cg.Spec.Runtime = "kata"
 			},
@@ -346,6 +348,7 @@ func TestGrantFromSpecMappingErrors(t *testing.T) {
 				"pod.metadata.name: Invalid value",
 				"metadata.namespace: Required value",
 				"spec.fibers.max: Invalid value",
+				"spec.callerThumbprint: Required value",
 				"spec.writeBudget: Invalid value",
 				"spec.runtime: Unsupported value",
 				"lease: Invalid value",
@@ -478,11 +481,10 @@ func TestGrantRoundTrip(t *testing.T) {
 			lease: time.Hour,
 		},
 		{
-			name: "proc without thumbprint or budget",
+			name: "proc without budget",
 			alg:  jose.EdDSA,
 			mutate: func(cg *v1alpha1.CapacityGrant) {
 				cg.Spec.Runtime = v1alpha1.RuntimeProc
-				cg.Spec.CallerThumbprint = ""
 				cg.Spec.WriteBudget = nil
 				cg.Spec.Fibers = v1alpha1.FiberBudget{Max: 1}
 			},

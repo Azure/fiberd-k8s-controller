@@ -1,0 +1,100 @@
+# The csi volumes fiberd-ca signs for. A serving leaf names only its grant's
+# Service, in the Pod's own namespace, which is never fiberd-system, where the
+# controller's Certificate serves. A client leaf names nothing but a common
+# name. The csi-driver expands $ in its attributes, so only the Pod name the
+# controller writes as common-name may hold one.
+#
+# The match looks only at the issuer-name attribute, whatever the volume's
+# driver, and an error in it would refuse an unrelated Pod, so it checks each
+# step before it reads it. Attribute names carry the csi.cert-manager.io/
+# prefix.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fiberd-ca-pods
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: ca
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: fiberd-ca-volume
+      expression: "has(object.spec) && has(object.spec.volumes) && object.spec.volumes.exists(v, has(v.csi) && has(v.csi.volumeAttributes) && 'csi.cert-manager.io/issuer-name' in v.csi.volumeAttributes && v.csi.volumeAttributes['csi.cert-manager.io/issuer-name'] == 'fiberd-ca')"
+  variables:
+    # The attributes of every volume the match found.
+    - name: volumes
+      expression: "object.spec.volumes.filter(v, has(v.csi) && has(v.csi.volumeAttributes) && 'csi.cert-manager.io/issuer-name' in v.csi.volumeAttributes && v.csi.volumeAttributes['csi.cert-manager.io/issuer-name'] == 'fiberd-ca').map(v, v.csi.volumeAttributes)"
+    - name: allowedKeys
+      expression: |-
+        [
+          'issuer-name',
+          'issuer-kind',
+          'common-name',
+          'dns-names',
+          'key-usages',
+          'duration',
+          'renew-before',
+          'reuse-private-key',
+          'key-algorithm',
+          'key-size',
+          'key-encoding',
+          'fs-group',
+          'certificate-file',
+          'privatekey-file',
+          'ca-file'
+        ].map(k, 'csi.cert-manager.io/' + k)
+    # The csi-driver reads duration with Go's own parser, and duration()
+    # fails on free text, which would refuse with an evaluation error
+    # instead of the rule. So duration() reads only what matches the form.
+    - name: durationForm
+      expression: "'^([0-9]+[hms])+$'"
+    - name: serverVolumes
+      expression: "variables.volumes.filter(a, 'csi.cert-manager.io/key-usages' in a && a['csi.cert-manager.io/key-usages'] == 'server auth')"
+    - name: clientVolumes
+      expression: "variables.volumes.filter(a, 'csi.cert-manager.io/key-usages' in a && a['csi.cert-manager.io/key-usages'] == 'client auth')"
+  validations:
+    - expression: "variables.volumes.all(a, a.all(k, k in variables.allowedKeys))"
+      message: "a csi volume for fiberd-ca may set only the csi.cert-manager.io/ attributes issuer-name, issuer-kind, common-name, dns-names, key-usages, duration, renew-before, reuse-private-key, key-algorithm, key-size, key-encoding, fs-group, certificate-file, privatekey-file and ca-file"
+      reason: Forbidden
+    - expression: "variables.volumes.all(a, 'csi.cert-manager.io/issuer-kind' in a && a['csi.cert-manager.io/issuer-kind'] == 'ClusterIssuer')"
+      message: "a csi volume for fiberd-ca must set issuer-kind to ClusterIssuer"
+      reason: Forbidden
+    - expression: "variables.volumes.all(a, a.all(k, !a[k].contains('$') || (k == 'csi.cert-manager.io/common-name' && a[k] == '${POD_NAME}')))"
+      message: "no attribute of a csi volume for fiberd-ca may hold $, except a common-name of exactly ${POD_NAME}"
+      reason: Forbidden
+    # fiberd names a caller by its key, so the common name is checked only
+    # for a wildcard.
+    - expression: "variables.volumes.all(a, !('csi.cert-manager.io/common-name' in a) || !a['csi.cert-manager.io/common-name'].contains('*'))"
+      message: "the common-name of a csi volume for fiberd-ca must not hold a wildcard *"
+      reason: Forbidden
+    - expression: "variables.volumes.all(a, !('csi.cert-manager.io/duration' in a) || a['csi.cert-manager.io/duration'].matches(variables.durationForm))"
+      message: "the duration of a csi volume for fiberd-ca must match ^([0-9]+[hms])+$, such as 24h"
+      reason: Forbidden
+    - expression: "variables.volumes.all(a, 'csi.cert-manager.io/key-usages' in a && a['csi.cert-manager.io/key-usages'] in ['server auth', 'client auth'])"
+      message: "a csi volume for fiberd-ca must set key-usages to exactly server auth or exactly client auth"
+      reason: Forbidden
+    - expression: "variables.serverVolumes.size() == 0 || request.namespace != 'fiberd-system'"
+      message: "a server auth csi volume for fiberd-ca is not allowed in fiberd-system, whose serving leaf is the controller's Certificate"
+      reason: Forbidden
+    - expression: |-
+        variables.serverVolumes.all(a, 'csi.cert-manager.io/dns-names' in a
+          && a['csi.cert-manager.io/dns-names'].split(',').size() == 2
+          && a['csi.cert-manager.io/dns-names'].split(',')[0].matches('^fiberd-[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.' + request.namespace + '\\.svc$')
+          && a['csi.cert-manager.io/dns-names'].split(',')[1] == a['csi.cert-manager.io/dns-names'].split(',')[0] + '.cluster.local')
+      message: "a server auth csi volume for fiberd-ca must set dns-names to exactly fiberd-<grant>.<namespace>.svc in the Pod's namespace and that name plus .cluster.local"
+      reason: Forbidden
+    - expression: "variables.serverVolumes.all(a, 'csi.cert-manager.io/duration' in a && a['csi.cert-manager.io/duration'].matches(variables.durationForm) && duration(a['csi.cert-manager.io/duration']) <= duration('24h'))"
+      message: "a server auth csi volume for fiberd-ca must set a duration of at most 24h"
+      reason: Forbidden
+    - expression: "variables.clientVolumes.all(a, !('csi.cert-manager.io/dns-names' in a))"
+      message: "a client auth csi volume for fiberd-ca must not set dns-names"
+      reason: Forbidden
+    - expression: "variables.clientVolumes.all(a, !('csi.cert-manager.io/duration' in a) || (a['csi.cert-manager.io/duration'].matches(variables.durationForm) && duration(a['csi.cert-manager.io/duration']) <= duration('2160h')))"
+      message: "a client auth csi volume for fiberd-ca must leave duration unset or set it to at most 2160h"
+      reason: Forbidden

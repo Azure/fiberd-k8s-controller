@@ -29,26 +29,29 @@ type RateLimits struct {
 	// bounds what the routes ask of the API server.
 	Global float64
 
-	// PodInterval is the time one Pod UID earns one more grant in.
+	// PodInterval is the time one Pod UID, or one caller address for one
+	// CapacityGrant, earns one more grant request in.
 	PodInterval time.Duration
 }
 
 // limiter holds the buckets of RateLimits. Every take returns how long the
 // caller must wait, with ok false when the request is refused.
 type limiter struct {
-	clock  clock.PassiveClock
-	perIP  *keyedBuckets
-	global *rate.Limiter
-	perPod *keyedBuckets
+	clock     clock.PassiveClock
+	perIP     *keyedBuckets
+	global    *rate.Limiter
+	perPod    *keyedBuckets
+	perCaller *keyedBuckets
 }
 
 // newLimiter returns a limiter over o that reads the time from c.
 func newLimiter(o RateLimits, c clock.PassiveClock) *limiter {
 	return &limiter{
-		clock:  c,
-		perIP:  newKeyedBuckets(rate.Limit(o.PerIP), burstOf(o.PerIP)),
-		global: rate.NewLimiter(rate.Limit(o.Global), burstOf(o.Global)),
-		perPod: newKeyedBuckets(rate.Every(o.PodInterval), podBurst),
+		clock:     c,
+		perIP:     newKeyedBuckets(rate.Limit(o.PerIP), burstOf(o.PerIP)),
+		global:    rate.NewLimiter(rate.Limit(o.Global), burstOf(o.Global)),
+		perPod:    newKeyedBuckets(rate.Every(o.PodInterval), podBurst),
+		perCaller: newKeyedBuckets(rate.Every(o.PodInterval), podBurst),
 	}
 }
 
@@ -71,6 +74,18 @@ func (l *limiter) admit(ip string) (wait time.Duration, ok bool) {
 // admitPod takes one request from the bucket of the Pod with uid.
 func (l *limiter) admitPod(uid string) (wait time.Duration, ok bool) {
 	return l.perPod.take(uid, l.clock.Now())
+}
+
+// admitCaller takes one request from the bucket of the caller whose key
+// has thumbprint, asking from ip for the CapacityGrant named grant. One
+// request returns every Pod's grant, so one client of a grant asks about
+// as often as a Pod does. The replicas of a caller share its key, so the
+// address keeps each replica's budget its own. The map is bounded by
+// maxLimiterKeys. Only a caller whose key a grant names reaches it, so
+// churning it takes a named key, and the per-address and global limits
+// still bound what an evicted bucket lets through.
+func (l *limiter) admitCaller(thumbprint, grant, ip string) (wait time.Duration, ok bool) {
+	return l.perCaller.take(thumbprint+"\x00"+grant+"\x00"+ip, l.clock.Now())
 }
 
 // take spends one token of b at now. AllowN leaves b as it was when it

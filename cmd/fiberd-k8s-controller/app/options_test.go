@@ -21,6 +21,7 @@ const (
 	testIssuer   = "https://fiberd-k8s-controller.fiberd-system.svc:8443"
 	testCertFile = "/var/run/fiberd/tls/tls.crt"
 	testKeyFile  = "/var/run/fiberd/tls/tls.key"
+	testCAFile   = "/var/run/fiberd/tls/ca.crt"
 )
 
 // withRequired prepends the flags that have no default to args.
@@ -29,6 +30,7 @@ func withRequired(args ...string) []string {
 		"--issuer-url=" + testIssuer,
 		"--tls-cert-file=" + testCertFile,
 		"--tls-private-key-file=" + testKeyFile,
+		"--client-ca-file=" + testCAFile,
 	}, args...)
 }
 
@@ -56,16 +58,16 @@ func defaults(ns string) Options {
 			StaleTTL:       podtemplate.DefaultStaleTTL,
 			EndpointFamily: podtemplate.DefaultEndpointFamily,
 			DefaultCPU:     resource.MustParse("500m"),
-			Plaintext:      true,
 			ServiceAccount: podtemplate.DefaultServiceAccount,
 		},
-		Namespace:   ns,
-		LeaderElect: true,
-		ProbeAddr:   ":8081",
-		IssuerAddr:  ":8443",
-		TLSCertFile: testCertFile,
-		TLSKeyFile:  testKeyFile,
-		Limits:      issuer.RateLimits{PerIP: 50, Global: 100, PodInterval: 10 * time.Second},
+		Namespace:    ns,
+		LeaderElect:  true,
+		ProbeAddr:    ":8081",
+		IssuerAddr:   ":8443",
+		TLSCertFile:  testCertFile,
+		TLSKeyFile:   testKeyFile,
+		ClientCAFile: testCAFile,
+		Limits:       issuer.RateLimits{PerIP: 50, Global: 100, PodInterval: 10 * time.Second},
 	}
 }
 
@@ -76,6 +78,7 @@ func unset(ns string) Options {
 	o.Template.IssuerURL = ""
 	o.TLSCertFile = ""
 	o.TLSKeyFile = ""
+	o.ClientCAFile = ""
 	return o
 }
 
@@ -112,7 +115,6 @@ func TestAddFlags(t *testing.T) {
 				"--stale-ttl=1m",
 				"--endpoint-family=inet6",
 				"--default-pod-cpu=2",
-				"--insecure-plaintext=false",
 				"--grant-service-account=grant-pods",
 				"--namespace=controllers",
 				"--leader-elect=false",
@@ -120,6 +122,7 @@ func TestAddFlags(t *testing.T) {
 				"--issuer-bind-address=127.0.0.1:9443",
 				"--tls-cert-file=/etc/fiberd/serving.crt",
 				"--tls-private-key-file=/etc/fiberd/serving.key",
+				"--client-ca-file=/etc/fiberd/ca.crt",
 				"--grant-rate-per-ip=5.5",
 				"--grant-rate=20",
 				"--grant-pod-interval=1m",
@@ -134,12 +137,13 @@ func TestAddFlags(t *testing.T) {
 						DefaultCPU:     resource.MustParse("2"),
 						ServiceAccount: "grant-pods",
 					},
-					Namespace:   "controllers",
-					ProbeAddr:   "127.0.0.1:9440",
-					IssuerAddr:  "127.0.0.1:9443",
-					TLSCertFile: "/etc/fiberd/serving.crt",
-					TLSKeyFile:  "/etc/fiberd/serving.key",
-					Limits:      issuer.RateLimits{PerIP: 5.5, Global: 20, PodInterval: time.Minute},
+					Namespace:    "controllers",
+					ProbeAddr:    "127.0.0.1:9440",
+					IssuerAddr:   "127.0.0.1:9443",
+					TLSCertFile:  "/etc/fiberd/serving.crt",
+					TLSKeyFile:   "/etc/fiberd/serving.key",
+					ClientCAFile: "/etc/fiberd/ca.crt",
+					Limits:       issuer.RateLimits{PerIP: 5.5, Global: 20, PodInterval: time.Minute},
 				}
 			},
 		},
@@ -151,6 +155,13 @@ func TestAddFlags(t *testing.T) {
 				o.Template.EndpointFamily = endpoint.Unix
 				return o
 			},
+		},
+		{
+			// Grant Pods serve mutual TLS only, so there is no switch to
+			// turn it off.
+			name:    "there is no plaintext flag",
+			args:    withRequired("--insecure-plaintext"),
+			wantErr: "flag provided but not defined: -insecure-plaintext",
 		},
 		{
 			name:    "an unknown endpoint family is refused",
@@ -250,6 +261,7 @@ func TestValidate(t *testing.T) {
 				o.IssuerAddr = "[::1]:9443"
 				o.TLSCertFile = "/etc/fiberd/serving.crt"
 				o.TLSKeyFile = "/etc/fiberd/serving.key"
+				o.ClientCAFile = "/etc/fiberd/ca.crt"
 			},
 		},
 		{
@@ -306,6 +318,11 @@ func TestValidate(t *testing.T) {
 			name:    "no key file",
 			mutate:  func(o *Options) { o.TLSKeyFile = "" },
 			wantErr: []string{"--tls-private-key-file is required"},
+		},
+		{
+			name:    "no client CA file",
+			mutate:  func(o *Options) { o.ClientCAFile = "" },
+			wantErr: []string{"--client-ca-file is required"},
 		},
 		{
 			name:    "an issuer address without a port",

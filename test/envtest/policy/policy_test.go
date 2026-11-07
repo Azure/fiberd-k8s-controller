@@ -225,6 +225,16 @@ func setRegistry(registry string) mutation {
 	}
 }
 
+// setSealKey names a seal key Secret for the zygote, which a hyperlight
+// registry zygote needs to pass the CRD.
+func setSealKey(name string) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		if err := unstructured.SetNestedField(u.Object, name, "spec", "zygote", "sealKeySecretName"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // setHelperImage asks for runtime hyperlight with image as its helper, so
 // the CRD rules on helperImage pass and only the policy decides.
 func setHelperImage(image string) mutation {
@@ -838,6 +848,16 @@ func TestPolicyHelperImage(t *testing.T) {
 			substr: "image " + helperRepo + "@" + testDigest + " " + imageListMessage + " in GrantPolicy default spec.images",
 		},
 		{
+			name: "refuses a hyperlight registry zygote while spec.registries is unset",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setHelperImage(helperRepo+"@"+testDigest)(t, u)
+				setRegistry("registry.example/team-a")(t, u)
+				setSealKey("team-a-seal")(t, u)
+			},
+			reason: metav1.StatusReasonForbidden,
+			substr: "registry registry.example/team-a " + registryListMessage,
+		},
+		{
 			name:   "admits a listed helper image with a tag and a digest",
 			mutate: setHelperImage(helperRepo + ":0.4.0@" + testDigest),
 		},
@@ -872,6 +892,37 @@ func TestPolicyHelperImage(t *testing.T) {
 			expectDenied(t, err, tc.reason, tc.substr)
 		})
 	}
+}
+
+// TestPolicyHyperlightRegistry lets one namespace run hyperlight with a
+// listed helper and registry, so a hyperlight grant that pulls its sealed
+// snapshot passes the policy, and the CRD alone refuses one with no seal
+// key.
+func TestPolicyHyperlightRegistry(t *testing.T) {
+	const (
+		helperRepo = "ghcr.io/azure/fiberd-helper"
+		registry   = "registry.example/team-a"
+	)
+	ns := namespace(t)
+	grant := readSample(t, ns)
+	setHelperImage(helperRepo+"@"+testDigest)(t, grant)
+	setRegistry(registry)(t, grant)
+	setSealKey("team-a-seal")(t, grant)
+
+	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
+		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, ns)
+		s.Runtimes = append(s.Runtimes, v1alpha1.RuntimeHyperlight)
+		s.HelperImages = []string{helperRepo}
+		s.Registries = []string{registry}
+	}, refused(grant, metav1.StatusReasonForbidden, "registry "+registry+" "+registryListMessage))
+	testutil.Eventually(t, "a hyperlight registry grant to be admitted in "+ns, accepted(grant))
+
+	if _, ok, _ := unstructured.NestedString(grant.Object, "spec", "callerThumbprint"); !ok {
+		t.Fatal("the sample grant names no callerThumbprint")
+	}
+	noKey := grant.DeepCopy()
+	unstructured.RemoveNestedField(noKey.Object, "spec", "zygote", "sealKeySecretName")
+	expectDenied(t, dryRunCreate(t.Context(), noKey), metav1.StatusReasonInvalid, "spec.zygote.sealKeySecretName: Required value")
 }
 
 // TestPolicyRegistry lists one TLS repository and one plain HTTP repository,

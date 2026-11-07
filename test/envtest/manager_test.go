@@ -475,9 +475,10 @@ func newGrant(ns, name string) *v1alpha1.CapacityGrant {
 	return &v1alpha1.CapacityGrant{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
 		Spec: v1alpha1.CapacityGrantSpec{
-			Zygote:  v1alpha1.ZygoteSpec{Digest: testDigest, Command: []string{"/usr/local/bin/refzygote"}},
-			Fibers:  v1alpha1.FiberBudget{Max: 8},
-			Runtime: v1alpha1.RuntimeProc,
+			Zygote:           v1alpha1.ZygoteSpec{Digest: testDigest, Command: []string{"/usr/local/bin/refzygote"}},
+			Fibers:           v1alpha1.FiberBudget{Max: 8},
+			Runtime:          v1alpha1.RuntimeProc,
+			CallerThumbprint: "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
 			PodTemplate: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 				Name:  podtemplate.ContainerName,
 				Image: testImage,

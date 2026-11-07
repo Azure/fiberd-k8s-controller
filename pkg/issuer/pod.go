@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-jose/go-jose/v4/jwt"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,6 +38,7 @@ var (
 	errGrantGone         = errors.New("the CapacityGrant does not exist")
 	errGrantRecreated    = errors.New("the CapacityGrant was recreated")
 	errSuperseded        = errors.New("the Pod was built from an older spec")
+	errUnboundGrant      = errors.New("the previous grant is bound to no caller")
 )
 
 // serveGrant issues a grant to the Pod whose token the request carries, or
@@ -78,6 +80,12 @@ func (h *Handler) serveGrant(r *http.Request) (any, error) {
 	// signs at, and the Issuer runs on the same clock.
 	now := h.clock.Now()
 	answer, renewed := h.renew(req.Previous, pod, now)
+	// A grant bound to no caller was issued to a Pod that serves plaintext,
+	// built before grant Pods served mutual TLS only. The conflict stops its
+	// renewals, so the Pod lapses within a lease.
+	if renewed && !callerBound(answer.Token) {
+		return nil, refuse(http.StatusConflict, reasonUnboundGrant, errUnboundGrant)
+	}
 	if !renewed {
 		if answer, err = h.issue(ctx, cg, pod, now); err != nil {
 			return nil, err
@@ -153,6 +161,24 @@ func (h *Handler) renew(previous string, pod *corev1.Pod, now time.Time) (grantA
 		return grantAnswer{}, false
 	}
 	return newAnswer(token, pod, now, expiresAt), true
+}
+
+// callerBound reports whether token, which this issuer has just signed,
+// carries a cnf jkt.
+func callerBound(token string) bool {
+	tok, err := jwt.ParseSigned(token, grant.AllowedAlgorithms)
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		Cnf struct {
+			JKT string `json:"jkt"`
+		} `json:"cnf"`
+	}
+	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
+		return false
+	}
+	return claims.Cnf.JKT != ""
 }
 
 // issue mints a first grant for pod from the spec it was built from.

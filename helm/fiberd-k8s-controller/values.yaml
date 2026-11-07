@@ -27,7 +27,8 @@ tenants: []
 
 # Where cert-manager and its csi-driver run. The chart bundles neither, and the
 # install fails when either is missing. The CA lives in this namespace, since
-# a ClusterIssuer reads its Secret from there.
+# a ClusterIssuer reads its Secret from there. The two ServiceAccounts are the
+# only users that may create a CertificateRequest for fiberd-ca.
 certManager:
   namespace: cert-manager
   serviceAccount: cert-manager

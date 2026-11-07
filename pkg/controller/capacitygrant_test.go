@@ -133,9 +133,10 @@ func testGrant(mods ...func(*v1alpha1.CapacityGrant)) *v1alpha1.CapacityGrant {
 			Generation: 3,
 		},
 		Spec: v1alpha1.CapacityGrantSpec{
-			Zygote:  v1alpha1.ZygoteSpec{Digest: "sha256:" + strings.Repeat("ab", 32), Command: []string{"/app/zygote"}},
-			Fibers:  v1alpha1.FiberBudget{Max: 4},
-			Runtime: v1alpha1.RuntimeProc,
+			Zygote:           v1alpha1.ZygoteSpec{Digest: "sha256:" + strings.Repeat("ab", 32), Command: []string{"/app/zygote"}},
+			Fibers:           v1alpha1.FiberBudget{Max: 4},
+			Runtime:          v1alpha1.RuntimeProc,
+			CallerThumbprint: "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
 			PodTemplate: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{Containers: []corev1.Container{{
 					Name:  podtemplate.ContainerName,

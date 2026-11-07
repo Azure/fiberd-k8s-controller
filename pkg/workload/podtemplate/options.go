@@ -23,8 +23,8 @@ const (
 	DefaultEndpointFamily = endpoint.Inet4
 	DefaultServiceAccount = "fiberd-grant"
 
-	// DefaultPodCPU is the CPU limit a grant Pod gets when its template
-	// sets none.
+	// DefaultPodCPU is the CPU request a grant Pod gets when its template
+	// sets no CPU. It gets no CPU limit.
 	DefaultPodCPU = "500m"
 )
 
@@ -51,13 +51,9 @@ type Options struct {
 	// EndpointFamily is fiberd's -endpoint-family. The default is inet4.
 	EndpointFamily endpoint.Family
 
-	// DefaultCPU is the CPU limit used when the template sets none. The
-	// default is 500m.
+	// DefaultCPU is the CPU request used when the template sets no CPU
+	// request or limit. No CPU limit is added. The default is 500m.
 	DefaultCPU resource.Quantity
-
-	// Plaintext adds -insecure-plaintext. It stays true until mutual TLS
-	// lands.
-	Plaintext bool
 
 	// ServiceAccount is the grant Pod's service account. The default is
 	// fiberd-grant.

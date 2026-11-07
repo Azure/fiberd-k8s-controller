@@ -156,7 +156,7 @@ var podTemplateRules = []string{
 var specRules = []string{
 	"!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",
 	"!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",
-	"!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight'",
+	"!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight' || has(self.zygote.sealKeySecretName)",
 }
 
 // warmRule is the CEL rule on spec.fibers.
@@ -181,9 +181,9 @@ func TestCapacityGrantSchema(t *testing.T) {
 			rules: []string{nameRule},
 		},
 		{
-			name:     "spec requires zygote fibers and podTemplate",
+			name:     "spec requires zygote fibers callerThumbprint and podTemplate",
 			path:     "spec",
-			required: []string{"zygote", "fibers", "podTemplate"},
+			required: []string{"zygote", "fibers", "callerThumbprint", "podTemplate"},
 		},
 		{
 			name:               "spec carries the runtime rules",

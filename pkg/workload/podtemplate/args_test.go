@@ -149,14 +149,13 @@ func TestControllerArgsAreNotTenantFlags(t *testing.T) {
 		name    string
 		runtime v1alpha1.Runtime
 		zygote  []string
-		opts    Options
 	}{
 		{name: "proc", runtime: v1alpha1.RuntimeProc},
 		{name: "runc", runtime: v1alpha1.RuntimeRunc},
 		{name: "gvisor", runtime: v1alpha1.RuntimeGvisor},
 		{name: "hyperlight", runtime: v1alpha1.RuntimeHyperlight},
-		{name: "proc with plaintext", runtime: v1alpha1.RuntimeProc, opts: Options{Plaintext: true}},
 		{name: "registry zygote with a seal key", runtime: v1alpha1.RuntimeProc, zygote: []string{"-registry=r", "-delta-seal-key=/k", "-fiber-hide=/d"}},
+		{name: "hyperlight registry zygote with a seal key", runtime: v1alpha1.RuntimeHyperlight, zygote: []string{"-registry=r", "-delta-seal-key=/k", "-fiber-hide=/d"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,7 +163,7 @@ func TestControllerArgsAreNotTenantFlags(t *testing.T) {
 			if zygote == nil {
 				zygote = []string{"-template=d=/z"}
 			}
-			for _, arg := range controllerArgs(tc.runtime, zygote, tc.opts.withDefaults()) {
+			for _, arg := range controllerArgs(tc.runtime, zygote, Options{}.withDefaults()) {
 				name, _, _ := strings.Cut(strings.TrimPrefix(arg, "-"), "=")
 				if tenantFlags[name] {
 					t.Errorf("the controller sets -%s, but checkArgs lets a tenant set it too", name)

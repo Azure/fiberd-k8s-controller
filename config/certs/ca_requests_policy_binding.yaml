@@ -1,0 +1,10 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fiberd-ca-requests
+  labels:
+    app.kubernetes.io/name: fiberd-k8s-controller
+    app.kubernetes.io/component: ca
+spec:
+  policyName: fiberd-ca-requests
+  validationActions: [Deny]

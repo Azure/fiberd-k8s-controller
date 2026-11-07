@@ -10,6 +10,10 @@ spec:
     max: 32
     warm: 4
   writeBudget: 64Mi
+  # A placeholder for the caller's key, the RFC 7638 example key's
+  # thumbprint. Put the thumbprint of the public key in the caller's client
+  # certificate here, as fiberd's tlsconf.Thumbprint computes it.
+  callerThumbprint: NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs
   runtime: proc
   podTemplate:
     spec:
@@ -18,7 +22,9 @@ spec:
         # A placeholder for the tenant's image, fiberd's image with the
         # zygote program added. The controller sets no default. The
         # admission policy requires a digest and a repository the GrantPolicy
-        # named default lists.
+        # named default lists. Its fiberd must be at Azure/fiberd de4ca4e or
+        # later, which no release holds yet, so neither the tag nor the
+        # digest names a real image.
         image: ghcr.io/azure/fiberd:0.4.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         resources:
           limits:

@@ -248,13 +248,21 @@ func TestCRDValidation(t *testing.T) {
 			},
 		},
 		{
-			name: "a registry zygote on runtime hyperlight",
+			name: "a registry zygote with a seal key on runtime hyperlight is accepted",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "runtime", "hyperlight")
+				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
+				setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes", "sealKeySecretName": "team-a-seal"})(t, u)
+			},
+		},
+		{
+			name: "a registry zygote without a seal key on runtime hyperlight",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
 				setSpecField(t, u, "runtime", "hyperlight")
 				setSpecField(t, u, "helperImage", "ghcr.io/azure/fiberd-helper@sha256:"+strings.Repeat("0", 64))
 				setZygote(map[string]any{"registry": "ghcr.io/team-a/zygotes"})(t, u)
 			},
-			wantErr: "zygote.registry is not allowed for runtime hyperlight",
+			wantErr: "spec.zygote.sealKeySecretName: Required value: runtime hyperlight with zygote.registry needs zygote.sealKeySecretName",
 		},
 		{
 			name:    "a zygote with a command and a registry",
@@ -279,6 +287,21 @@ func TestCRDValidation(t *testing.T) {
 			name:    "a registry with an https scheme",
 			mutate:  setZygote(map[string]any{"registry": "https://ghcr.io/team-a/zygotes"}),
 			wantErr: "spec.zygote.registry",
+		},
+		{
+			name: "no caller thumbprint",
+			mutate: func(_ *testing.T, u *unstructured.Unstructured) {
+				unstructured.RemoveNestedField(u.Object, "spec", "callerThumbprint")
+			},
+			wantErr: "spec.callerThumbprint: Required value",
+		},
+		{
+			// RFC 7638 thumbprints are base64url without padding.
+			name: "a padded caller thumbprint",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				setSpecField(t, u, "callerThumbprint", "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs=")
+			},
+			wantErr: "spec.callerThumbprint",
 		},
 		{
 			name:    "a name longer than 56 characters",

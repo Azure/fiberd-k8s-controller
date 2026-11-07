@@ -37,7 +37,6 @@ func TestOptionsWithDefaults(t *testing.T) {
 				StaleTTL:       time.Minute,
 				EndpointFamily: endpoint.Inet6,
 				DefaultCPU:     resource.MustParse("2"),
-				Plaintext:      true,
 				ServiceAccount: "runner",
 			},
 			want: Options{
@@ -46,7 +45,6 @@ func TestOptionsWithDefaults(t *testing.T) {
 				StaleTTL:       time.Minute,
 				EndpointFamily: endpoint.Inet6,
 				DefaultCPU:     resource.MustParse("2"),
-				Plaintext:      true,
 				ServiceAccount: "runner",
 			},
 		},

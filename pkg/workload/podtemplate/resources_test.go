@@ -21,10 +21,10 @@ func TestBuildResources(t *testing.T) {
 		want       corev1.ResourceRequirements
 	}{
 		{
-			name: "memory only gets the default CPU",
+			name: "memory only gets the default CPU request and no CPU limit",
 			in:   corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi")}},
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi")},
 			},
 		},
@@ -33,12 +33,12 @@ func TestBuildResources(t *testing.T) {
 			in:         corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi")}},
 			defaultCPU: "2",
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("2"), corev1.ResourceMemory: q("1Gi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("2"), corev1.ResourceMemory: q("1Gi")},
 			},
 		},
 		{
-			name: "a tenant CPU limit is kept",
+			name: "a tenant CPU limit is kept and its request defaults to it",
 			in:   corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceCPU: q("3"), corev1.ResourceMemory: q("2Gi")}},
 			want: corev1.ResourceRequirements{
 				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("3"), corev1.ResourceMemory: q("2Gi")},
@@ -46,14 +46,14 @@ func TestBuildResources(t *testing.T) {
 			},
 		},
 		{
-			name: "tenant requests are replaced by the limits",
+			name: "a tenant CPU request and limit both stay, the memory request follows its limit",
 			in: corev1.ResourceRequirements{
 				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("1"), corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("100m"), corev1.ResourceMemory: q("128Mi")},
 			},
 			want: corev1.ResourceRequirements{
 				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("1"), corev1.ResourceMemory: q("1Gi")},
-				Requests: corev1.ResourceList{corev1.ResourceCPU: q("1"), corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("100m"), corev1.ResourceMemory: q("1Gi")},
 			},
 		},
 		{
@@ -63,18 +63,29 @@ func TestBuildResources(t *testing.T) {
 				Requests: corev1.ResourceList{corev1.ResourceEphemeralStorage: q("5Gi")},
 			},
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), corev1.ResourceEphemeralStorage: q("5Gi")},
 			},
 		},
 		{
-			name: "a CPU request without a CPU limit becomes the limit",
+			name: "a limit other than CPU gets an equal request",
+			in: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), corev1.ResourceEphemeralStorage: q("5Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceEphemeralStorage: q("1Gi")},
+			},
+			want: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), corev1.ResourceEphemeralStorage: q("5Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), corev1.ResourceEphemeralStorage: q("5Gi")},
+			},
+		},
+		{
+			name: "a CPU request without a CPU limit stays request-only",
 			in: corev1.ResourceRequirements{
 				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("4")},
 			},
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("4"), corev1.ResourceMemory: q("1Gi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("4"), corev1.ResourceMemory: q("1Gi")},
 			},
 		},
@@ -83,8 +94,17 @@ func TestBuildResources(t *testing.T) {
 			in:         corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi")}, Requests: corev1.ResourceList{corev1.ResourceCPU: q("250m")}},
 			defaultCPU: "2",
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("250m"), corev1.ResourceMemory: q("1Gi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("250m"), corev1.ResourceMemory: q("1Gi")},
+			},
+		},
+		{
+			name:       "a CPU limit wins over a custom default CPU",
+			in:         corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceCPU: q("750m"), corev1.ResourceMemory: q("1Gi")}},
+			defaultCPU: "2",
+			want: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("750m"), corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("750m"), corev1.ResourceMemory: q("1Gi")},
 			},
 		},
 		{
@@ -94,7 +114,7 @@ func TestBuildResources(t *testing.T) {
 				Requests: corev1.ResourceList{"example.com/fpga": q("1")},
 			},
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), "example.com/fpga": q("1")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), "example.com/fpga": q("1")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), "example.com/fpga": q("1")},
 			},
 		},
@@ -105,7 +125,7 @@ func TestBuildResources(t *testing.T) {
 				Requests: corev1.ResourceList{"hugepages-2Mi": q("64Mi")},
 			},
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), "hugepages-2Mi": q("64Mi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), "hugepages-2Mi": q("64Mi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), "hugepages-2Mi": q("64Mi")},
 			},
 		},
@@ -116,18 +136,19 @@ func TestBuildResources(t *testing.T) {
 				Requests: corev1.ResourceList{"kubernetes.io/batch-cpu": q("1")},
 			},
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), "kubernetes.io/batch-cpu": q("1")},
 			},
 		},
 		{
 			name: "extended resources and claims",
 			in: corev1.ResourceRequirements{
-				Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), "nvidia.com/gpu": q("1")},
-				Claims: claims,
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), "nvidia.com/gpu": q("1")},
+				Requests: corev1.ResourceList{"nvidia.com/gpu": q("2")},
+				Claims:   claims,
 			},
 			want: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), "nvidia.com/gpu": q("1")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), "nvidia.com/gpu": q("1")},
 				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), "nvidia.com/gpu": q("1")},
 				Claims:   claims,
 			},
@@ -144,26 +165,23 @@ func TestBuildResources(t *testing.T) {
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("resources mismatch (-want +got):\n%s", diff)
 			}
-			if !isGuaranteed(got) {
-				t.Errorf("resources %#v are not Guaranteed", got)
+			if !memoryPinned(got) {
+				t.Errorf("resources %#v do not pin the memory request to its limit", got)
 			}
 		})
 	}
 }
 
-// isGuaranteed is the kubelet's rule for one container. CPU and memory
-// both have limits, and every request equals its limit.
-func isGuaranteed(r corev1.ResourceRequirements) bool {
-	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
-		limit, ok := r.Limits[name]
-		if !ok {
-			return false
-		}
-		if req, ok := r.Requests[name]; ok && req.Cmp(limit) != 0 {
-			return false
-		}
+// memoryPinned reports whether the memory request equals the memory
+// limit, which keeps the Pod's memory use within its request and so near
+// the bottom of the kubelet's eviction order.
+func memoryPinned(r corev1.ResourceRequirements) bool {
+	limit, ok := r.Limits[corev1.ResourceMemory]
+	if !ok {
+		return false
 	}
-	return true
+	req, ok := r.Requests[corev1.ResourceMemory]
+	return ok && req.Cmp(limit) == 0
 }
 
 func TestNeedsExclusiveDevice(t *testing.T) {

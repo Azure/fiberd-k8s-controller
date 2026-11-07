@@ -10,44 +10,61 @@ import (
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
 
-// guaranteed returns the container's resources in the Guaranteed QoS
-// class. The container's memory limit is the ceiling fiberd carves every
-// fiber from, and a Guaranteed Pod is the last the kubelet evicts.
+// sizeResources returns the fiberd container's resources. The memory
+// limit is the ceiling fiberd carves every fiber from, so its request is
+// pinned to it. CPU gets a request but no limit unless the tenant set
+// one. GOMAXPROCS follows the CPU limit and a restore burst is CPU-bound,
+// so a limit would throttle restores while the node has idle cores.
 //
-// Limits start as the tenant's. A missing CPU limit becomes the tenant's
-// CPU request, or defaultCPU when the tenant set neither. A missing memory
-// limit is an error, since no default fits every zygote. An extended
-// resource or hugepages request without a limit gets a limit equal to it,
-// since the API server requires the two to match for those. Every
-// resource in limits then gets an equal request, replacing the tenant's.
-// A tenant request for another resource without a limit, such as
-// ephemeral-storage, stays. Claims stay as the tenant wrote them.
-func guaranteed(fld *field.Path, in corev1.ResourceRequirements, defaultCPU resource.Quantity) (corev1.ResourceRequirements, field.ErrorList) {
+// The Pod is Burstable unless the tenant set a CPU limit equal to its
+// request. The kubelet ranks eviction candidates first by whether their
+// usage exceeds their request, and memory usage cannot pass a request
+// equal to its limit, so the Pod stays near the bottom of the eviction
+// order with the Guaranteed Pods. Its OOM score is still a Burstable one.
+//
+// Limits start as the tenant's. A missing memory limit is an error, since
+// no default fits every zygote. An extended resource or hugepages request
+// without a limit gets a limit equal to it, since the API server requires
+// the two to match for those. Every resource in limits but CPU then gets
+// an equal request, replacing the tenant's. A tenant CPU limit keeps the
+// tenant's CPU request, or gets an equal one when there is none, as
+// Kubernetes does. Without a CPU limit, the CPU request is the tenant's or
+// defaultCPU. A tenant request for another resource without a limit, such
+// as ephemeral-storage, stays. Claims stay as the tenant wrote them.
+func sizeResources(fld *field.Path, in corev1.ResourceRequirements, defaultCPU resource.Quantity) (corev1.ResourceRequirements, field.ErrorList) {
 	var errs field.ErrorList
 	limits := in.Limits.DeepCopy()
 	if limits == nil {
 		limits = corev1.ResourceList{}
-	}
-	if _, ok := limits[corev1.ResourceCPU]; !ok {
-		if req, ok := in.Requests[corev1.ResourceCPU]; ok {
-			limits[corev1.ResourceCPU] = req.DeepCopy()
-		} else {
-			limits[corev1.ResourceCPU] = defaultCPU.DeepCopy()
-		}
 	}
 	for name, req := range in.Requests {
 		if _, ok := limits[name]; !ok && needsEqualLimit(name) {
 			limits[name] = req.DeepCopy()
 		}
 	}
-	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
-		q, ok := limits[name]
-		switch {
-		case !ok:
-			errs = append(errs, field.Required(fld.Child("limits").Key(string(name)), "a grant Pod needs a memory limit, its fibers share it"))
-		case q.Sign() <= 0:
-			errs = append(errs, field.Invalid(fld.Child("limits").Key(string(name)), q.String(), "must be positive"))
-		}
+	switch q, ok := limits[corev1.ResourceMemory]; {
+	case !ok:
+		errs = append(errs, field.Required(fld.Child("limits").Key(string(corev1.ResourceMemory)), "a grant Pod needs a memory limit, its fibers share it"))
+	case q.Sign() <= 0:
+		errs = append(errs, field.Invalid(fld.Child("limits").Key(string(corev1.ResourceMemory)), q.String(), "must be positive"))
+	}
+
+	cpuLimit, hasCPULimit := limits[corev1.ResourceCPU]
+	cpu, hasCPU := in.Requests[corev1.ResourceCPU]
+	switch {
+	case !hasCPU && hasCPULimit:
+		cpu = cpuLimit
+	case !hasCPU:
+		cpu = defaultCPU
+	}
+	if hasCPULimit && cpuLimit.Sign() <= 0 {
+		errs = append(errs, field.Invalid(fld.Child("limits").Key(string(corev1.ResourceCPU)), cpuLimit.String(), "must be positive"))
+	}
+	switch {
+	case hasCPU && cpu.Sign() <= 0:
+		errs = append(errs, field.Invalid(fld.Child("requests").Key(string(corev1.ResourceCPU)), cpu.String(), "must be positive"))
+	case hasCPU && hasCPULimit && cpu.Cmp(cpuLimit) > 0:
+		errs = append(errs, field.Invalid(fld.Child("requests").Key(string(corev1.ResourceCPU)), cpu.String(), "must not exceed the CPU limit "+cpuLimit.String()))
 	}
 	if len(errs) > 0 {
 		return corev1.ResourceRequirements{}, errs
@@ -60,6 +77,7 @@ func guaranteed(fld *field.Path, in corev1.ResourceRequirements, defaultCPU reso
 	for name, q := range limits {
 		requests[name] = q.DeepCopy()
 	}
+	requests[corev1.ResourceCPU] = cpu.DeepCopy()
 	out := corev1.ResourceRequirements{Limits: limits, Requests: requests}
 	if in.Claims != nil {
 		out.Claims = append([]corev1.ResourceClaim(nil), in.Claims...)

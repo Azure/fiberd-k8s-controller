@@ -321,6 +321,13 @@ func (e *grantEnv) previous(t *testing.T, uid string, iat time.Time) string {
 // iat. Its claims are previousFiberMax and previousLease.
 func signPrevious(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time) string {
 	t.Helper()
+	return signBound(t, key, uid, iat, grantThumbprint)
+}
+
+// signBound is signPrevious bound to the caller with thumbprint. Empty
+// binds it to none, as a grant of a plaintext Pod was.
+func signBound(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time, thumbprint string) string {
+	t.Helper()
 	tok, err := grant.Sign(core.Grant{
 		UID:            uid,
 		Issuer:         testIssuerURL,
@@ -335,7 +342,7 @@ func signPrevious(t *testing.T, key *jose.JSONWebKey, uid string, iat time.Time)
 			Isolation:    core.Trusted,
 			EndpointMode: core.EndpointDirect,
 		},
-		CallerThumbprint: grantThumbprint,
+		CallerThumbprint: thumbprint,
 	}, key, iat)
 	if err != nil {
 		t.Fatalf("grant.Sign: %v", err)
@@ -502,6 +509,16 @@ func grantRefusals() []grantCase {
 			body:       func(*testing.T, *grantEnv) string { return renewal("not-a-grant") },
 			wantStatus: http.StatusConflict,
 			wantReason: reasonSuperseded,
+		},
+		{
+			// A Pod built when grant Pods still served plaintext holds a
+			// grant bound to no caller. It must lapse, not renew forever.
+			name: "409 a renewal of a grant bound to no caller",
+			body: func(t *testing.T, e *grantEnv) string {
+				return renewal(signBound(t, e.key, podA, testStart.Add(-time.Minute), ""))
+			},
+			wantStatus: http.StatusConflict,
+			wantReason: reasonUnboundGrant,
 		},
 		{
 			name:       "422 an invalid spec at first issuance",

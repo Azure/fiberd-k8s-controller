@@ -81,6 +81,65 @@ func TestBuildHelper(t *testing.T) {
 	}
 }
 
+// TestBuildHelperResources checks that the init container takes the
+// fiberd container's CPU and memory requests and limits as they are, so it
+// gets a CPU limit only when fiberd has one and never raises the Pod's
+// requests or changes its QoS class.
+func TestBuildHelperResources(t *testing.T) {
+	q := resource.MustParse
+	cases := []struct {
+		name string
+		in   corev1.ResourceRequirements
+		want corev1.ResourceRequirements
+	}{
+		{
+			name: "no CPU set",
+			in:   corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi")}},
+			want: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi")},
+			},
+		},
+		{
+			name: "a CPU request only",
+			in: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("2"), corev1.ResourceEphemeralStorage: q("1Gi")},
+			},
+			want: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("2"), corev1.ResourceMemory: q("1Gi")},
+			},
+		},
+		{
+			name: "a CPU limit above its request",
+			in: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("4"), corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("1")},
+			},
+			want: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("4"), corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("1"), corev1.ResourceMemory: q("1Gi")},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, v1alpha1.RuntimeHyperlight)
+				container(cg).Resources = tc.in
+			})
+			spec := mustBuild(t, cg, testOptions()).Spec
+			if len(spec.InitContainers) != 1 {
+				t.Fatalf("initContainers = %v, want the helper's alone", spec.InitContainers)
+			}
+			if diff := cmp.Diff(tc.want, spec.InitContainers[0].Resources); diff != "" {
+				t.Errorf("init container resources mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestBuildHelperEnv checks that tenant env stays on the fiberd container,
 // where the helper runs, and that the init container receives none.
 func TestBuildHelperEnv(t *testing.T) {

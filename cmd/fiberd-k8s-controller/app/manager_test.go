@@ -1,8 +1,10 @@
 package app
 
 import (
+	"crypto/x509"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"testing"
@@ -12,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/Azure/fiberd/pkg/tlsconf/tlsconftest"
 
 	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 	"github.com/Azure/fiberd-k8s-controller/pkg/issuer"
@@ -103,4 +107,29 @@ func cacheSelector(t *testing.T, opts cache.Options, obj client.Object) labels.S
 	}
 	t.Fatalf("the cache does not filter %T", obj)
 	return nil
+}
+
+func TestLoadPool(t *testing.T) {
+	dir := t.TempDir()
+	ca := tlsconftest.NewCA(t, "fiberd-ca")
+	caFile := filepath.Join(dir, "ca.crt")
+	empty := filepath.Join(dir, "empty.crt")
+	for path, data := range map[string][]byte{caFile: ca.CertPEM(), empty: []byte("no certificate here\n")} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pool, err := loadPool(caFile)
+	if err != nil {
+		t.Fatalf("loadPool: %v", err)
+	}
+	if _, err := ca.Client(t, "caller").Cert.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		t.Errorf("a client certificate from the CA does not verify against the pool: %v", err)
+	}
+	for _, path := range []string{empty, filepath.Join(dir, "missing.crt")} {
+		if _, err := loadPool(path); err == nil {
+			t.Errorf("loadPool(%s) = nil error, want one", filepath.Base(path))
+		}
+	}
 }
