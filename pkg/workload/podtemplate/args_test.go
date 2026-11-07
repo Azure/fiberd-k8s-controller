@@ -84,6 +84,29 @@ func TestCheckArgs(t *testing.T) {
 	}
 }
 
+func TestEngineSet(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "no args"},
+		{name: "a flag with the engine prefix", args: []string{"-engine-memory-max=1"}},
+		{name: "empty value", args: []string{"-engine="}},
+		{name: "an empty value last", args: []string{"-engine=x", "--engine="}},
+		{name: "a value", args: []string{"-engine=x"}, want: true},
+		{name: "a value in the two-dash form", args: []string{"--engine=x"}, want: true},
+		{name: "a value last", args: []string{"-engine=", "-engine=x"}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := engineSet(tc.args); got != tc.want {
+				t.Errorf("engineSet(%q) = %t, want %t", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTenantFlags(t *testing.T) {
 	want := []string{
 		"delta-key", "delta-registry", "delta-trust", "devices", "engine",

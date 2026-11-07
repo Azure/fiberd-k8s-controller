@@ -9036,6 +9036,13 @@ spec:
                     && !has(self.spec.securityContext.windowsOptions))) && (self.spec.containers.size()
                     == 0 || !has(self.spec.containers[0].securityContext) || (!has(self.spec.containers[0].securityContext.seLinuxOptions)
                     && !has(self.spec.containers[0].securityContext.windowsOptions))))'
+                - fieldPath: .spec.containers
+                  message: podTemplate.spec.containers[0].securityContext.privileged
+                    is not allowed, nothing runs privileged
+                  reason: FieldValueForbidden
+                  rule: '!has(self.spec) || self.spec.containers.size() == 0 || !has(self.spec.containers[0].securityContext)
+                    || !has(self.spec.containers[0].securityContext.privileged) ||
+                    !self.spec.containers[0].securityContext.privileged'
               runtime:
                 default: proc
                 description: runtime is the fiberd backend that runs the fibers.

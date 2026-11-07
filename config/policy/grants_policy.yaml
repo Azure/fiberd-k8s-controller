@@ -127,10 +127,7 @@ spec:
     # devices or the sandbox, which the Pod-level rules otherwise prevent.
     - name: reservedKeyPrefixes
       expression: "['fiberd.io/', 'container.apparmor.security.beta.kubernetes.io/', 'seccomp.security.alpha.kubernetes.io/', 'container.seccomp.security.alpha.kubernetes.io/', 'k8s.v1.cni.cncf.io/', 'cni.projectcalico.org/', 'io.kubernetes.cri-o.', 'dev.gvisor.', 'io.katacontainers.']"
-    - name: privileged
-      expression: "has(variables.container.securityContext) && has(variables.container.securityContext.privileged) && variables.container.securityContext.privileged"
-    # Nobody has measured the capability set of these runtimes yet, so the
-    # builder runs their Pods privileged whatever the tenant wrote.
+    # These runtimes are allowed only in a namespace the GrantPolicy lists.
     - name: privilegedRuntimes
       expression: "['gvisor', 'hyperlight']"
     # The CRD defaults runtimes, so the guard only keeps an object written
@@ -218,8 +215,8 @@ spec:
       messageExpression: "'mount path ' + variables.outsidePaths[0] + ' must be at or under ' + variables.mountRoots.join(', ')"
       message: "a mountPath, devicePath or terminationMessagePath is outside the directories a tenant may mount in"
       reason: Forbidden
-    - expression: "!(variables.privileged || (has(object.spec.runtime) && object.spec.runtime in variables.privilegedRuntimes)) || (has(params.spec.privilegedNamespaces) && object.metadata.namespace in params.spec.privilegedNamespaces)"
-      message: "a privileged fiberd container, which the gvisor and hyperlight runtimes need, is allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
+    - expression: "!(has(object.spec.runtime) && object.spec.runtime in variables.privilegedRuntimes) || (has(params.spec.privilegedNamespaces) && object.metadata.namespace in params.spec.privilegedNamespaces)"
+      message: "the gvisor and hyperlight runtimes are allowed only in a namespace listed in GrantPolicy default spec.privilegedNamespaces"
       reason: Forbidden
     - expression: "has(object.spec.runtime) && object.spec.runtime in variables.runtimes"
       messageExpression: "has(object.spec.runtime) ? 'runtime ' + object.spec.runtime + ' is not listed in GrantPolicy default spec.runtimes' : 'spec.runtime is required'"

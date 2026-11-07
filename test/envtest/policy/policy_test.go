@@ -246,8 +246,10 @@ func setHelperImage(image string) mutation {
 	}
 }
 
-func setPrivileged(t *testing.T, u *unstructured.Unstructured) {
-	testutil.SetContainerField(t, u, "securityContext", map[string]any{"privileged": true})
+func setPrivileged(privileged bool) mutation {
+	return func(t *testing.T, u *unstructured.Unstructured) {
+		testutil.SetContainerField(t, u, "securityContext", map[string]any{"privileged": privileged})
+	}
 }
 
 // TestPolicyRefusals runs one or more cases per fiberd-grants rule, beside
@@ -730,16 +732,21 @@ func TestPolicyRefusals(t *testing.T) {
 			mutate: setTerminationMessagePath(""),
 		},
 		{
-			name:   "refuses a privileged container in an unlisted namespace",
-			mutate: setPrivileged,
-			reason: metav1.StatusReasonForbidden,
-			substr: privilegedMessage,
+			// The CRD refuses this, so the policy never sees it.
+			name:   "refuses a privileged container",
+			mutate: setPrivileged(true),
+			reason: metav1.StatusReasonInvalid,
+			substr: privilegedFieldMessage,
 		},
 		{
-			// gvisor also breaks the runtimes rule, and the privileged rule
+			name:   "admits privileged false",
+			mutate: setPrivileged(false),
+		},
+		{
+			// gvisor also breaks the runtimes rule, and the namespace rule
 			// comes first. TestPolicyPrivilegedNamespace reaches the
 			// runtimes rule.
-			name:   "refuses a privileged runtime in an unlisted namespace",
+			name:   "refuses the gvisor runtime in an unlisted namespace",
 			mutate: setRuntime("gvisor"),
 			reason: metav1.StatusReasonForbidden,
 			substr: privilegedMessage,
@@ -770,45 +777,55 @@ func TestPolicyRefusals(t *testing.T) {
 }
 
 // TestPolicyPrivilegedNamespace lists one namespace in privilegedNamespaces
-// and checks that it, and no other, may run a privileged container, and
-// that listing it does not also admit a runtime GrantPolicy default leaves
-// out.
+// and checks that it, and no other, passes the namespace rule, and that
+// listing it does not also admit a runtime GrantPolicy default leaves out.
 func TestPolicyPrivilegedNamespace(t *testing.T) {
+	const runtimeNotListed = "runtime gvisor is not listed"
 	listed, unlisted := namespace(t), namespace(t)
 	inListed := readSample(t, listed)
-	setPrivileged(t, inListed)
+	setRuntime("gvisor")(t, inListed)
 
 	editGrantPolicy(t, func(s *v1alpha1.GrantPolicySpec) {
 		s.PrivilegedNamespaces = append(s.PrivilegedNamespaces, listed)
 	}, refused(inListed, metav1.StatusReasonForbidden, privilegedMessage))
-	testutil.Eventually(t, "a privileged grant to be admitted in "+listed, accepted(inListed))
+	testutil.Eventually(t, "the namespace rule to pass in "+listed, refused(inListed, metav1.StatusReasonForbidden, runtimeNotListed))
 
 	cases := []struct {
 		name   string
 		ns     string
 		mutate mutation
+		reason metav1.StatusReason
 		substr string
 	}{
 		{
-			name:   "refuses a privileged container in a namespace GrantPolicy default does not list",
+			name:   "refuses gvisor in a namespace GrantPolicy default does not list",
 			ns:     unlisted,
-			mutate: setPrivileged,
+			mutate: setRuntime("gvisor"),
+			reason: metav1.StatusReasonForbidden,
 			substr: privilegedMessage,
 		},
 		{
-			// The listed namespace passes the privileged rule, so only the
+			// The listed namespace passes the namespace rule, so only the
 			// runtimes rule can refuse gvisor here.
 			name:   "refuses an unlisted runtime in the listed namespace",
 			ns:     listed,
 			mutate: setRuntime("gvisor"),
-			substr: "runtime gvisor is not listed",
+			reason: metav1.StatusReasonForbidden,
+			substr: runtimeNotListed,
+		},
+		{
+			name:   "refuses a privileged container in the listed namespace",
+			ns:     listed,
+			mutate: setPrivileged(true),
+			reason: metav1.StatusReasonInvalid,
+			substr: privilegedFieldMessage,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u := readSample(t, tc.ns)
 			tc.mutate(t, u)
-			expectDenied(t, dryRunCreate(t.Context(), u), metav1.StatusReasonForbidden, tc.substr)
+			expectDenied(t, dryRunCreate(t.Context(), u), tc.reason, tc.substr)
 		})
 	}
 }

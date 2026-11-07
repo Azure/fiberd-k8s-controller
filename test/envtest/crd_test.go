@@ -89,6 +89,19 @@ func TestCRDValidation(t *testing.T) {
 			wantErr: "podTemplate.spec.containers[0].workingDir is not allowed",
 		},
 		{
+			name: "a privileged container",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetContainerField(t, u, "securityContext", map[string]any{"privileged": true})
+			},
+			wantErr: "podTemplate.spec.containers[0].securityContext.privileged is not allowed",
+		},
+		{
+			name: "privileged false is accepted",
+			mutate: func(t *testing.T, u *unstructured.Unstructured) {
+				testutil.SetContainerField(t, u, "securityContext", map[string]any{"privileged": false})
+			},
+		},
+		{
 			name: "an init container",
 			mutate: func(t *testing.T, u *unstructured.Unstructured) {
 				testutil.SetPodField(t, u, "initContainers", []any{map[string]any{"name": "init", "image": "registry.k8s.io/pause:3.10"}})

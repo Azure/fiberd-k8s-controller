@@ -116,6 +116,7 @@ func TestAddFlags(t *testing.T) {
 				"--endpoint-family=inet6",
 				"--default-pod-cpu=2",
 				"--grant-service-account=grant-pods",
+				"--hyperlight-device-resource=example.com/kvm",
 				"--namespace=controllers",
 				"--leader-elect=false",
 				"--health-probe-bind-address=127.0.0.1:9440",
@@ -130,12 +131,13 @@ func TestAddFlags(t *testing.T) {
 			want: func() Options {
 				return Options{
 					Template: podtemplate.Options{
-						IssuerURL:      "https://issuer.example.com",
-						Lease:          30 * time.Minute,
-						StaleTTL:       time.Minute,
-						EndpointFamily: endpoint.Inet6,
-						DefaultCPU:     resource.MustParse("2"),
-						ServiceAccount: "grant-pods",
+						IssuerURL:                "https://issuer.example.com",
+						Lease:                    30 * time.Minute,
+						StaleTTL:                 time.Minute,
+						EndpointFamily:           endpoint.Inet6,
+						DefaultCPU:               resource.MustParse("2"),
+						ServiceAccount:           "grant-pods",
+						HyperlightDeviceResource: "example.com/kvm",
 					},
 					Namespace:    "controllers",
 					ProbeAddr:    "127.0.0.1:9440",
@@ -145,6 +147,15 @@ func TestAddFlags(t *testing.T) {
 					ClientCAFile: "/etc/fiberd/ca.crt",
 					Limits:       issuer.RateLimits{PerIP: 5.5, Global: 20, PodInterval: time.Minute},
 				}
+			},
+		},
+		{
+			name: "the hyperlight device resource defaults to empty",
+			args: withRequired(),
+			want: func() Options {
+				o := defaults("")
+				o.Template.HyperlightDeviceResource = ""
+				return o
 			},
 		},
 		{
@@ -308,6 +319,15 @@ func TestValidate(t *testing.T) {
 			name:    "a negative default CPU",
 			mutate:  func(o *Options) { o.Template.DefaultCPU = resource.MustParse("-1") },
 			wantErr: []string{"default CPU must be positive"},
+		},
+		{
+			name:   "a hyperlight device resource is valid",
+			mutate: func(o *Options) { o.Template.HyperlightDeviceResource = "example.com/kvm" },
+		},
+		{
+			name:    "a hyperlight device resource that is not an extended resource",
+			mutate:  func(o *Options) { o.Template.HyperlightDeviceResource = "cpu" },
+			wantErr: []string{`hyperlight device resource "cpu"`},
 		},
 		{
 			name:    "no certificate file",

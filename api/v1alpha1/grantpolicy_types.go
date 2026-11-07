@@ -47,9 +47,8 @@ type GrantPolicySpec struct {
 	// +kubebuilder:validation:items:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
 	Registries []string `json:"registries,omitempty"`
 
-	// privilegedNamespaces are the namespaces whose grants may set securityContext.privileged
-	// on the fiberd container, or ask for the gvisor or hyperlight runtime, which run
-	// privileged.
+	// privilegedNamespaces lists the namespaces whose grants may ask for the gvisor or
+	// hyperlight runtime.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=256

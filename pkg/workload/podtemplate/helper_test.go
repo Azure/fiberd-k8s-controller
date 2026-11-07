@@ -88,10 +88,20 @@ func TestBuildHelper(t *testing.T) {
 func TestBuildHelperResources(t *testing.T) {
 	q := resource.MustParse
 	cases := []struct {
-		name string
-		in   corev1.ResourceRequirements
-		want corev1.ResourceRequirements
+		name   string
+		device string
+		in     corev1.ResourceRequirements
+		want   corev1.ResourceRequirements
 	}{
+		{
+			name:   "the hypervisor device stays on the fiberd container",
+			device: "example.com/kvm",
+			in:     corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi")}},
+			want: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi")},
+			},
+		},
 		{
 			name: "no CPU set",
 			in:   corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi")}},
@@ -129,7 +139,9 @@ func TestBuildHelperResources(t *testing.T) {
 				setRuntime(cg, v1alpha1.RuntimeHyperlight)
 				container(cg).Resources = tc.in
 			})
-			spec := mustBuild(t, cg, testOptions()).Spec
+			opts := testOptions()
+			opts.HyperlightDeviceResource = tc.device
+			spec := mustBuild(t, cg, opts).Spec
 			if len(spec.InitContainers) != 1 {
 				t.Fatalf("initContainers = %v, want the helper's alone", spec.InitContainers)
 			}

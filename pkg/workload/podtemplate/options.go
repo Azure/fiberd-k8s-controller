@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/api/validate/content"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -58,6 +59,11 @@ type Options struct {
 	// ServiceAccount is the grant Pod's service account. The default is
 	// fiberd-grant.
 	ServiceAccount string
+
+	// HyperlightDeviceResource is the extended resource of the hypervisor
+	// device. Every hyperlight Pod asks for one of it. Unset adds nothing,
+	// and a tenant brings its own resource claim.
+	HyperlightDeviceResource string
 }
 
 // withDefaults returns o with every unset field given its default.
@@ -107,7 +113,25 @@ func (o Options) Validate() error {
 	if msgs := content.IsDNS1123Subdomain(o.ServiceAccount); len(msgs) > 0 {
 		errs = append(errs, fmt.Errorf("service account %q is not a valid name: %s", o.ServiceAccount, strings.Join(msgs, "; ")))
 	}
+	if o.HyperlightDeviceResource != "" {
+		if err := validDeviceResource(o.HyperlightDeviceResource); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	return utilerrors.NewAggregate(errs)
+}
+
+// validDeviceResource accepts an extended resource with a qualified name,
+// the shape a device plugin registers. Any other value is a mistake that
+// would reach every hyperlight Pod.
+func validDeviceResource(s string) error {
+	if !isExtendedResource(corev1.ResourceName(s)) {
+		return fmt.Errorf("hyperlight device resource %q is not an extended resource", s)
+	}
+	if msgs := content.IsLabelKey(s); len(msgs) > 0 {
+		return fmt.Errorf("hyperlight device resource %q is not a valid name: %s", s, strings.Join(msgs, "; "))
+	}
+	return nil
 }
 
 // validIssuer accepts an absolute https URL with a host and nothing after

@@ -626,6 +626,83 @@ func TestBuildPorts(t *testing.T) {
 	}
 }
 
+// TestBuildDevice checks that a hyperlight Pod gets one hypervisor device when
+// the controller names it, on top of what the tenant wrote. Any other runtime
+// or an unset name adds nothing, and the tenant may then write the resource.
+func TestBuildDevice(t *testing.T) {
+	const device = "example.com/kvm"
+	q := resource.MustParse
+	memoryOnly := corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi")}}
+	sized := corev1.ResourceRequirements{
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi")},
+		Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi")},
+	}
+	tenantDevice := corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), device: q("2")}}
+	tenantSized := corev1.ResourceRequirements{
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), device: q("2")},
+		Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), device: q("2")},
+	}
+	cases := []struct {
+		name    string
+		runtime v1alpha1.Runtime
+		device  string
+		in      corev1.ResourceRequirements
+		want    corev1.ResourceRequirements
+	}{
+		{
+			name:    "hyperlight holds one device in limits and requests",
+			runtime: v1alpha1.RuntimeHyperlight,
+			device:  device,
+			in:      memoryOnly,
+			want: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: q("1Gi"), device: q("1")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("500m"), corev1.ResourceMemory: q("1Gi"), device: q("1")},
+			},
+		},
+		{
+			name:    "the tenant's other resources stay",
+			runtime: v1alpha1.RuntimeHyperlight,
+			device:  device,
+			in: corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceCPU: q("3"), corev1.ResourceMemory: q("2Gi"), "example.com/fpga": q("2")},
+				Requests: corev1.ResourceList{corev1.ResourceCPU: q("1"), corev1.ResourceEphemeralStorage: q("5Gi")},
+				Claims:   []corev1.ResourceClaim{{Name: "gpu"}},
+			},
+			want: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{corev1.ResourceCPU: q("3"), corev1.ResourceMemory: q("2Gi"), "example.com/fpga": q("2"), device: q("1")},
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:              q("1"),
+					corev1.ResourceMemory:           q("2Gi"),
+					corev1.ResourceEphemeralStorage: q("5Gi"),
+					"example.com/fpga":              q("2"),
+					device:                          q("1"),
+				},
+				Claims: []corev1.ResourceClaim{{Name: "gpu"}},
+			},
+		},
+		{name: "proc holds none", runtime: v1alpha1.RuntimeProc, device: device, in: memoryOnly, want: sized},
+		{name: "runc holds none", runtime: v1alpha1.RuntimeRunc, device: device, in: memoryOnly, want: sized},
+		{name: "gvisor holds none", runtime: v1alpha1.RuntimeGvisor, device: device, in: memoryOnly, want: sized},
+		{name: "hyperlight with no device named holds none", runtime: v1alpha1.RuntimeHyperlight, in: memoryOnly, want: sized},
+		{name: "a tenant on proc may write the resource", runtime: v1alpha1.RuntimeProc, device: device, in: tenantDevice, want: tenantSized},
+		{name: "a tenant on hyperlight with no device named may write the resource", runtime: v1alpha1.RuntimeHyperlight, in: tenantDevice, want: tenantSized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cg := testGrant(func(cg *v1alpha1.CapacityGrant) {
+				setRuntime(cg, tc.runtime)
+				container(cg).Resources = tc.in
+			})
+			opts := testOptions()
+			opts.HyperlightDeviceResource = tc.device
+			got := mustBuild(t, cg, opts).Spec.Containers[0].Resources
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("resources mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestBuildErrors(t *testing.T) {
 	type grantMod = func(*v1alpha1.CapacityGrant)
 	podMod := func(f func(*corev1.PodSpec)) grantMod {
@@ -634,6 +711,21 @@ func TestBuildErrors(t *testing.T) {
 	ctrMod := func(f func(*corev1.Container)) grantMod {
 		return func(cg *v1alpha1.CapacityGrant) { f(container(cg)) }
 	}
+	hyperlightMod := func(r corev1.ResourceRequirements) grantMod {
+		return func(cg *v1alpha1.CapacityGrant) {
+			setRuntime(cg, v1alpha1.RuntimeHyperlight)
+			container(cg).Resources = r
+		}
+	}
+	privilegedOn := func(rt v1alpha1.Runtime) grantMod {
+		return func(cg *v1alpha1.CapacityGrant) {
+			setRuntime(cg, rt)
+			container(cg).SecurityContext = &corev1.SecurityContext{Privileged: ptr.To(true)}
+		}
+	}
+	nameDevice := func(o *Options) { o.HyperlightDeviceResource = "example.com/kvm" }
+	// Two rows share it, so each proves one of the two errors is reported.
+	deviceNoMemory := hyperlightMod(corev1.ResourceRequirements{Limits: corev1.ResourceList{"example.com/kvm": resource.MustParse("1")}})
 	emptyDir := corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
 	// Two rows share it, so each proves one of the two errors is reported.
 	commandAndHook := ctrMod(func(c *corev1.Container) {
@@ -642,6 +734,7 @@ func TestBuildErrors(t *testing.T) {
 	})
 	const envWhy = "must match " + EnvNamePattern
 	const sourceWhy = "Forbidden: must be an emptyDir, configMap, secret, downwardAPI, projected, persistentVolumeClaim or ephemeral volume"
+	const privilegedWhy = "spec.podTemplate.spec.containers[0].securityContext.privileged: Forbidden: nothing runs privileged"
 	tenantProbe := &corev1.Probe{
 		ProbeHandler:  corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromInt32(9090)}},
 		PeriodSeconds: 7,
@@ -822,6 +915,10 @@ func TestBuildErrors(t *testing.T) {
 			}),
 			wantErr: "spec.podTemplate.spec.containers[0].securityContext.windowsOptions",
 		},
+		{name: "privileged on proc", mod: privilegedOn(v1alpha1.RuntimeProc), wantErr: privilegedWhy},
+		{name: "privileged on runc", mod: privilegedOn(v1alpha1.RuntimeRunc), wantErr: privilegedWhy},
+		{name: "privileged on gvisor", mod: privilegedOn(v1alpha1.RuntimeGvisor), wantErr: privilegedWhy},
+		{name: "privileged on hyperlight", mod: privilegedOn(v1alpha1.RuntimeHyperlight), wantErr: privilegedWhy},
 		{
 			name:    "init containers",
 			mod:     podMod(func(s *corev1.PodSpec) { s.InitContainers = []corev1.Container{{Name: "init"}} }),
@@ -1096,6 +1193,35 @@ func TestBuildErrors(t *testing.T) {
 				c.Resources.Requests = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")}
 			}),
 			wantErr: "spec.podTemplate.spec.containers[0].resources.requests[cpu]: Invalid value: \"2\": must not exceed the CPU limit 1",
+		},
+		{
+			name: "a tenant device limit on hyperlight",
+			mod: hyperlightMod(corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi"), "example.com/kvm": resource.MustParse("1")},
+			}),
+			opts:    nameDevice,
+			wantErr: "spec.podTemplate.spec.containers[0].resources.limits[example.com/kvm]: Forbidden: the controller sets the hypervisor device",
+		},
+		{
+			name: "a tenant device request alone on hyperlight",
+			mod: hyperlightMod(corev1.ResourceRequirements{
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")},
+				Requests: corev1.ResourceList{"example.com/kvm": resource.MustParse("1")},
+			}),
+			opts:    nameDevice,
+			wantErr: "spec.podTemplate.spec.containers[0].resources.requests[example.com/kvm]: Forbidden: the controller sets the hypervisor device",
+		},
+		{
+			name:    "a tenant device limit is reported with the missing memory limit",
+			mod:     deviceNoMemory,
+			opts:    nameDevice,
+			wantErr: "spec.podTemplate.spec.containers[0].resources.limits[example.com/kvm]: Forbidden",
+		},
+		{
+			name:    "the missing memory limit is reported with a tenant device limit",
+			mod:     deviceNoMemory,
+			opts:    nameDevice,
+			wantErr: "spec.podTemplate.spec.containers[0].resources.limits[memory]: Required value",
 		},
 	}
 	for _, tc := range cases {

@@ -1,7 +1,6 @@
 package podtemplate
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,22 +13,13 @@ import (
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/yaml"
-
-	"github.com/Azure/fiberd-k8s-controller/api/v1alpha1"
 )
 
-// The files these tests read, seen from this package's directory.
-const (
-	// grantsPolicyFile is the admission policy that the builder's checks
-	// repeat.
-	grantsPolicyFile = "../../../config/policy/grants_policy.yaml"
-
-	// grantCRDFile is the generated CapacityGrant schema.
-	grantCRDFile = "../../../config/crd/bases/fiberd.io_capacitygrants.yaml"
-)
+// grantsPolicyFile is the admission policy that the builder's checks repeat,
+// seen from this package's directory.
+const grantsPolicyFile = "../../../config/policy/grants_policy.yaml"
 
 // hasSource finds each volume source the policy's has() chain names.
 var hasSource = regexp.MustCompile(`has\(v\.(\w+)\)`)
@@ -59,12 +49,6 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 			name:     "reservedKeyPrefixes equals reservedKeyPrefixes",
 			variable: "reservedKeyPrefixes",
 			want:     reservedKeyPrefixes,
-			anyOrder: true,
-		},
-		{
-			name:     "privilegedRuntimes holds every runtime with no measured capabilities",
-			variable: "privilegedRuntimes",
-			want:     unmeasuredRuntimes(t),
 			anyOrder: true,
 		},
 	}
@@ -203,39 +187,6 @@ func policyValidation(t *testing.T, vap *admissionregistrationv1.ValidatingAdmis
 		t.Fatalf("%s has no validation of %s", grantsPolicyFile, variable)
 	}
 	return vap.Spec.Validations[i]
-}
-
-// unmeasuredRuntimes returns the runtimes of the CapacityGrant schema that
-// measuredCaps has no capability set for. It reads the schema, so a new
-// runtime reaches this test without anyone listing it here.
-func unmeasuredRuntimes(t *testing.T) []string {
-	t.Helper()
-	raw, err := os.ReadFile(grantCRDFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var crd apiextensionsv1.CustomResourceDefinition
-	if err := yaml.Unmarshal(raw, &crd); err != nil {
-		t.Fatalf("parse %s: %v", grantCRDFile, err)
-	}
-	if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Schema == nil {
-		t.Fatalf("%s holds %d versions, want one with a schema", grantCRDFile, len(crd.Spec.Versions))
-	}
-	enum := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["runtime"].Enum
-	if len(enum) == 0 {
-		t.Fatalf("%s lists no runtimes", grantCRDFile)
-	}
-	var out []string
-	for _, e := range enum {
-		var rt v1alpha1.Runtime
-		if err := json.Unmarshal(e.Raw, &rt); err != nil {
-			t.Fatalf("runtime %s is not a string: %v", e.Raw, err)
-		}
-		if _, measured := measuredCaps(rt); !measured {
-			out = append(out, string(rt))
-		}
-	}
-	return out
 }
 
 // celStringList parses a CEL list literal of single-quoted strings, the
