@@ -1,0 +1,373 @@
+name: release
+
+# A dispatch from main is the only way to publish. A dry run is the default. It
+# runs every gate, builds everything and sends the image and the chart through a
+# registry on the runner, and it publishes nothing. docs/releasing.md says how
+# to run this, and hack/release holds its rules and steps.
+#
+# The gates and the build run side by side, and every job that writes needs them
+# all. No job deletes a release or a package, and no tag moves.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The release tag, such as v0.1.0 or v0.1.0-rc.1
+        type: string
+        required: true
+      dry_run:
+        description: Build and check only, and publish nothing
+        type: boolean
+        required: false
+        default: true
+
+run-name: release ${{ inputs.version }}${{ inputs.dry_run && ' (dry run)' || '' }}
+
+permissions:
+  contents: read
+
+# One real run at a time, since each refreshes the same draft. A dry run writes
+# nothing, so it waits in a group of its own.
+concurrency:
+  group: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  TAG: ${{ inputs.version }}
+
+jobs:
+  validate:
+    name: validate the version and the pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      prerelease: ${{ steps.validate.outputs.prerelease }}
+      image: ${{ steps.validate.outputs.image }}
+      chart: ${{ steps.validate.outputs.chart }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          FIBERD_VERSION: ${{ vars.FIBERD_VERSION }}
+        run: |
+          source hack/release/lib.sh
+          validate=(-version "${TAG}" -image "${IMAGE}" -chart "${CHART}")
+          pin=(-enforce)
+          if [[ "${DRY_RUN}" == true ]]; then
+            validate+=(-dry-run)
+            pin=()
+          fi
+          go run ./hack/release validate "${validate[@]}" >>"${GITHUB_OUTPUT}"
+          go run ./hack/release pin "${pin[@]}"
+          printf 'image=%s\nchart=%s\n' "${IMAGE}" "${CHART}" >>"${GITHUB_OUTPUT}"
+
+  lint:
+    name: lint
+    needs: validate
+    uses: ./.github/workflows/lint.yml
+
+  test:
+    name: test
+    needs: validate
+    uses: ./.github/workflows/test.yml
+
+  conformance:
+    name: conformance
+    needs: validate
+    uses: ./.github/workflows/conformance.yml
+    with:
+      fiberd_ref: pin
+      arm64: true
+
+  # Whatever a release ships is built here, so this job restores no cache.
+  build:
+    name: build the image and the assets
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+      - id: image
+        name: Build the image
+        run: hack/release/build-image.sh "${RUNNER_TEMP}/image" "${VERSION}" >>"${GITHUB_OUTPUT}"
+      - name: Check the image and package the assets
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          hack/release/check-image.sh "${RUNNER_TEMP}/image" "${DIGEST}"
+          hack/release/package.sh "${RUNNER_TEMP}/assets" "${VERSION}" "${DIGEST}"
+          hack/release/check-assets.sh "${RUNNER_TEMP}/assets" "${VERSION}" "${DIGEST}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-image
+          path: ${{ runner.temp }}/image
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/assets
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each architecture proves the built bytes on its own runner, through a
+  # registry that goes away with the job.
+  smoke:
+    name: smoke ${{ matrix.arch }}
+    needs: [validate, build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    services:
+      registry:
+        image: registry:3.1.1@sha256:325b4b29b041e82803abeb703e201655e4e23ab83264ec1a7c9ddb0a5b14a6e0
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-image
+          path: ${{ runner.temp }}/image
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/assets
+      - name: Smoke the image and the chart
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: hack/release/smoke.sh "${RUNNER_TEMP}/image" "${RUNNER_TEMP}/assets" "${VERSION}" "${DIGEST}"
+
+  # This job and every one after it writes, so a dry run skips them all. The
+  # environment is where a run waits for its approval.
+  draft:
+    name: draft the release
+    needs: [validate, lint, test, conformance, build, smoke]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/assets
+      - id: guard
+        name: Refuse a released tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: go run ./hack/release guard -tag "${TAG}" >>"${GITHUB_OUTPUT}"
+      - name: Create or refresh the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          DRAFT_ID: ${{ steps.guard.outputs.draft-id }}
+        run: hack/release/draft.sh "${RUNNER_TEMP}/assets" "${TAG}" "${VERSION}" "${DIGEST}" "${PRERELEASE}" "${DRAFT_ID}"
+
+  # The tags come last, so a version tag exists only on bytes that are attested.
+  # Until publish runs, no release points at anything here.
+  push:
+    name: push and attest
+    needs: [validate, build, draft]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      chart-digest: ${{ steps.chart.outputs.digest }}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-image
+          path: ${{ runner.temp }}/image
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/assets
+      # This token sees no drafts, so this only learns the tag is not released.
+      - name: Refuse a released tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: go run ./hack/release guard -tag "${TAG}"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Push the image by digest
+        run: |
+          source hack/release/lib.sh
+          pushed="$(crane push "${RUNNER_TEMP}/image" "${IMAGE}@${DIGEST}")"
+          [[ "${pushed}" == "${IMAGE}@${DIGEST}" ]] || die "pushed ${pushed}, want ${IMAGE}@${DIGEST}"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.validate.outputs.image }}
+          subject-digest: ${{ needs.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Verify the attestation, then tag the image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source hack/release/lib.sh
+          gh attestation verify "oci://${IMAGE}@${DIGEST}" --repo "${GITHUB_REPOSITORY}"
+          crane tag "${IMAGE}@${DIGEST}" "${VERSION}"
+      - id: chart
+        name: Push the chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source hack/release/lib.sh
+          helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin <<<"${GH_TOKEN}"
+          helm push "${RUNNER_TEMP}/assets/${CHART_NAME}-${VERSION}.tgz" "oci://${CHART%/*}"
+          digest="$(crane digest "${CHART}:${VERSION}")"
+          check_digest "${digest}"
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.validate.outputs.chart }}
+          subject-digest: ${{ steps.chart.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/assets/SHA256SUMS
+
+  publish:
+    name: publish the release
+    needs: [validate, build, push]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: finish
+        name: Check the draft is this run's
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: go run ./hack/release finish -tag "${TAG}" -digest "${DIGEST}" >>"${GITHUB_OUTPUT}"
+      - name: Publish the draft
+        if: ${{ steps.finish.outputs.finished != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT_ID: ${{ steps.finish.outputs.draft-id }}
+          CHART_DIGEST: ${{ needs.push.outputs.chart-digest }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        run: hack/release/publish.sh "${DRAFT_ID}" "${CHART_DIGEST}" "${PRERELEASE}"
+
+  # A new package can start private, so a first release can stop here. The
+  # release stands. Set the package to public, then re-run this job alone.
+  check-pull:
+    name: check that a pull needs no login
+    needs: [validate, build, publish]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      - name: Pull each artifact with no login
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          CHART: ${{ needs.validate.outputs.chart }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          DOCKER_CONFIG: ${{ runner.temp }}/no-login
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/no-login/helm.json
+        run: |
+          mkdir -p "${DOCKER_CONFIG}"
+          failed=0
+          report() {
+            echo "::error::$1 cannot be read with no login. If its package is private, set it to public, then re-run this job."
+            failed=1
+          }
+          docker manifest inspect "${IMAGE}@${DIGEST}" >/dev/null || report "${IMAGE}@${DIGEST}"
+          docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null || report "${IMAGE}:${VERSION}"
+          helm pull "oci://${CHART}" --version "${VERSION}" --destination "${RUNNER_TEMP}" || report "${CHART}:${VERSION}"
+          install="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/install.yaml"
+          curl -fsSL "${install}" >/dev/null || report "${install}"
+          exit "${failed}"
