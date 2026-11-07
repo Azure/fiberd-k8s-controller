@@ -111,6 +111,11 @@ func TestPolicyMatchesBuilder(t *testing.T) {
 			t.Errorf("%q does not hold %s", msg, EnvNamePattern)
 		}
 	})
+	t.Run("guestArgPattern equals GuestArgPattern", func(t *testing.T) {
+		if got, want := policyVariable(t, vap, "guestArgPattern"), "'"+GuestArgPattern+"'"; got != want {
+			t.Errorf("variable guestArgPattern = %s, want %s", got, want)
+		}
+	})
 }
 
 // TestPolicyVolumeSources keeps the sources the admission policy allows

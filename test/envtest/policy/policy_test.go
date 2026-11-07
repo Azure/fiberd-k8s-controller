@@ -330,6 +330,32 @@ func TestPolicyRefusals(t *testing.T) {
 			mutate: setArgs("-gvisor-templates-on-disk"),
 		},
 		{
+			name:   "refuses a relative guest",
+			mutate: setArgs("-hyperlight-guest=guest"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "arg -hyperlight-guest=guest must carry an absolute path",
+		},
+		{
+			name:   "refuses a relative guest in the two-dash form",
+			mutate: setArgs("--hyperlight-guest=bin/guest"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "arg --hyperlight-guest=bin/guest must carry an absolute path",
+		},
+		{
+			name:   "refuses a relative guest after an absolute one",
+			mutate: setArgs("-hyperlight-guest=/g", "-hyperlight-guest=guest"),
+			reason: metav1.StatusReasonInvalid,
+			substr: "arg -hyperlight-guest=guest must carry an absolute path",
+		},
+		{
+			name:   "admits an absolute guest",
+			mutate: setArgs("-hyperlight-guest=/g"),
+		},
+		{
+			name:   "admits an empty guest",
+			mutate: setArgs("-hyperlight-guest="),
+		},
+		{
 			name:   "refuses an image without a digest",
 			mutate: setImage("ghcr.io/azure/fiberd:0.4.0"),
 			reason: metav1.StatusReasonInvalid,

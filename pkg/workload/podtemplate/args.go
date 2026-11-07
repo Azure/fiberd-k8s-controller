@@ -15,6 +15,17 @@ const ArgPattern = `^-{1,2}[a-z][a-z0-9-]*(=.*)?$`
 
 var argPattern = regexp.MustCompile(ArgPattern)
 
+// GuestArgPattern is the only shape a guest arg may take. Its value is empty
+// or an absolute path, because fiberd refuses to start on a relative path.
+// The admission policy in config/policy repeats it, and a test keeps the two
+// equal.
+const GuestArgPattern = `^-{1,2}hyperlight-guest=(/.*)?$`
+
+var guestArgPattern = regexp.MustCompile(GuestArgPattern)
+
+// guestFlag is the flag GuestArgPattern governs.
+const guestFlag = "hyperlight-guest"
+
 // tenantFlags are the fiberd flags a tenant may pass in args. Every other
 // flag fiberd binds is the controller's, such as -issuer and the -template,
 // -registry and -delta-seal-key that spec.zygote sets, or the operator's,
@@ -43,7 +54,7 @@ var tenantFlags = map[string]bool{
 	// Trades RAM for disk on the tenant's own share of the node.
 	"gvisor-templates-on-disk": true,
 	// The guest the tenant's helper loads.
-	"hyperlight-guest": true,
+	guestFlag: true,
 	// How strictly the grant's own parks must match the host.
 	"parity": true,
 }
@@ -60,7 +71,8 @@ var tenantBoolFlags = map[string]bool{
 // checkArgs refuses tenant args that name a flag outside tenantFlags, with
 // errors rooted at fld. Each arg must be one flag in the one- or two-dash
 // form with its value after "=", such as -delta-registry=example.com/deltas.
-// Only a boolean flag may omit the value.
+// Only a boolean flag may omit the value. Every guest arg must match
+// GuestArgPattern.
 func checkArgs(fld *field.Path, args []string) field.ErrorList {
 	var errs field.ErrorList
 	for i, arg := range args {
@@ -75,6 +87,8 @@ func checkArgs(fld *field.Path, args []string) field.ErrorList {
 			errs = append(errs, field.Forbidden(p, "-"+name+" is not a flag a tenant may set"))
 		case !hasValue && !tenantBoolFlags[name]:
 			errs = append(errs, field.Invalid(p, arg, "must carry its value as -"+name+"=value"))
+		case name == guestFlag && !guestArgPattern.MatchString(arg):
+			errs = append(errs, field.Invalid(p, arg, "must be an absolute path"))
 		}
 	}
 	return errs
