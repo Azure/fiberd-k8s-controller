@@ -64,11 +64,6 @@ func TestBuildArgs(t *testing.T) {
 			want: wantProcArgs(),
 		},
 		{
-			name: "unset runtime is proc",
-			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = "" }},
-			want: wantProcArgs(),
-		},
-		{
 			name: "runc adds its rootfs",
 			mods: []func(*v1alpha1.CapacityGrant){func(cg *v1alpha1.CapacityGrant) { cg.Spec.Runtime = v1alpha1.RuntimeRunc }},
 			want: append(withArg(wantProcArgs(), "-runtime=", "-runtime=runc"), "-runc-rootfs=/usr/share/fiberd/rootfs"),

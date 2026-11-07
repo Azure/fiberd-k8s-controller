@@ -195,7 +195,8 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	podPath := specPath.Child("podTemplate", "spec")
 	tmpl := cg.Spec.PodTemplate.DeepCopy()
 
-	rt, errs := checkRuntime(specPath.Child("runtime"), cg.Spec.Runtime)
+	rt := cg.Spec.Runtime
+	errs := checkRuntime(specPath.Child("runtime"), rt)
 	if len(errs) == 0 {
 		errs = append(errs, checkHelperImage(specPath.Child("helperImage"), rt, cg.Spec.HelperImage)...)
 		errs = append(errs, checkSealKey(specPath.Child("zygote", "sealKeySecretName"), rt, cg.Spec.Zygote)...)
@@ -258,15 +259,16 @@ func Build(cg *v1alpha1.CapacityGrant, image, serviceName string, opts Options) 
 	return *tmpl, nil
 }
 
-// checkRuntime returns the grant's runtime, proc when unset as the CRD
-// defaults it.
-func checkRuntime(fld *field.Path, rt v1alpha1.Runtime) (v1alpha1.Runtime, field.ErrorList) {
-	rt = runtimeOrDefault(rt)
+// checkRuntime refuses a runtime that is empty or unknown. The CRD requires
+// a known one, so the builder reads no default into an empty value.
+func checkRuntime(fld *field.Path, rt v1alpha1.Runtime) field.ErrorList {
 	switch rt {
 	case v1alpha1.RuntimeProc, v1alpha1.RuntimeRunc, v1alpha1.RuntimeGvisor, v1alpha1.RuntimeHyperlight:
-		return rt, nil
+		return nil
+	case "":
+		return field.ErrorList{field.Required(fld, "a grant must name its runtime")}
 	}
-	return "", field.ErrorList{field.NotSupported(fld, rt, []v1alpha1.Runtime{
+	return field.ErrorList{field.NotSupported(fld, rt, []v1alpha1.Runtime{
 		v1alpha1.RuntimeProc, v1alpha1.RuntimeRunc, v1alpha1.RuntimeGvisor, v1alpha1.RuntimeHyperlight,
 	})}
 }

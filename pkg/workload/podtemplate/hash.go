@@ -50,9 +50,8 @@ type hashInput struct {
 
 // Hash is a stable hash over the fields that change the grant or the Pod,
 // used for the fiberd.io/grant-hash annotation. Same inputs, same hash,
-// across controller restarts. An unset runtime hashes as proc, its
-// default. It never changes cg. A nil grant, or one that cannot be
-// serialized, is an error.
+// across controller restarts. It never changes cg. A nil grant, or one that
+// cannot be serialized, is an error.
 func Hash(cg *v1alpha1.CapacityGrant, image string) (string, error) {
 	if cg == nil {
 		return "", errors.New("podtemplate: nil CapacityGrant")
@@ -63,7 +62,7 @@ func Hash(cg *v1alpha1.CapacityGrant, image string) (string, error) {
 		Fibers:           cg.Spec.Fibers,
 		WriteBudget:      cg.Spec.WriteBudget,
 		CallerThumbprint: cg.Spec.CallerThumbprint,
-		Runtime:          runtimeOrDefault(cg.Spec.Runtime),
+		Runtime:          cg.Spec.Runtime,
 		Image:            image,
 		HelperImage:      cg.Spec.HelperImage,
 		PodTemplate:      cg.Spec.PodTemplate,
@@ -87,12 +86,4 @@ func ImageOf(cg *v1alpha1.CapacityGrant) string {
 		}
 	}
 	return ""
-}
-
-// runtimeOrDefault is the runtime the CRD defaults an unset one to.
-func runtimeOrDefault(rt v1alpha1.Runtime) v1alpha1.Runtime {
-	if rt == "" {
-		return v1alpha1.RuntimeProc
-	}
-	return rt
 }

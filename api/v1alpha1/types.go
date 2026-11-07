@@ -31,9 +31,9 @@ func RuntimeLabel(rt Runtime) string {
 
 // CapacityGrantSpec describes the capacity a tenant asks for and the Pod that holds it.
 //
-// +kubebuilder:validation:XValidation:rule="!has(self.helperImage) || (has(self.runtime) && self.runtime == 'hyperlight')",message="helperImage is allowed only for runtime hyperlight",fieldPath=".helperImage",reason="FieldValueForbidden"
-// +kubebuilder:validation:XValidation:rule="!has(self.runtime) || self.runtime != 'hyperlight' || has(self.helperImage)",message="runtime hyperlight needs helperImage, fiberd does not start without its helper",fieldPath=".helperImage",reason="FieldValueRequired"
-// +kubebuilder:validation:XValidation:rule="!has(self.zygote.registry) || !has(self.runtime) || self.runtime != 'hyperlight' || has(self.zygote.sealKeySecretName)",message="runtime hyperlight with zygote.registry needs zygote.sealKeySecretName, the pulled snapshot is sealed",fieldPath=".zygote.sealKeySecretName",reason="FieldValueRequired"
+// +kubebuilder:validation:XValidation:rule="!has(self.helperImage) || self.runtime == 'hyperlight'",message="helperImage is allowed only for runtime hyperlight",fieldPath=".helperImage",reason="FieldValueForbidden"
+// +kubebuilder:validation:XValidation:rule="self.runtime != 'hyperlight' || has(self.helperImage)",message="runtime hyperlight needs helperImage, fiberd does not start without its helper",fieldPath=".helperImage",reason="FieldValueRequired"
+// +kubebuilder:validation:XValidation:rule="!has(self.zygote.registry) || self.runtime != 'hyperlight' || has(self.zygote.sealKeySecretName)",message="runtime hyperlight with zygote.registry needs zygote.sealKeySecretName, the pulled snapshot is sealed",fieldPath=".zygote.sealKeySecretName",reason="FieldValueRequired"
 type CapacityGrantSpec struct {
 	// zygote is the program every fiber of the grant is cloned from.
 	// +required
@@ -57,9 +57,9 @@ type CapacityGrantSpec struct {
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-]{43}$`
 	CallerThumbprint string `json:"callerThumbprint,omitempty"`
 
-	// runtime is the fiberd backend that runs the fibers.
-	// +optional
-	// +kubebuilder:default="proc"
+	// runtime is the fiberd backend that runs the fibers. It is required and has no default.
+	// The GrantPolicy says which runtimes a namespace may use.
+	// +required
 	Runtime Runtime `json:"runtime,omitempty"`
 
 	// helperImage is the image the Hyperlight helper comes from. Runtime hyperlight needs it,
@@ -128,7 +128,7 @@ type ZygoteSpec struct {
 	// is the value of fiberd's -registry flag. GrantPolicy spec.registries must list it, and
 	// fiberd pulls anonymously, so the repository must be public. On runtime hyperlight the
 	// artifact is a sealed Hyperlight snapshot that the helper restores, which needs
-	// sealKeySecretName, a helper that advertises template-dir, and fiberd with Azure/fiberd#101.
+	// sealKeySecretName and a helper that advertises template-dir.
 	// +optional
 	// +kubebuilder:validation:MaxLength=255
 	// +kubebuilder:validation:Pattern=`^(http://)?(localhost(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?|[a-z0-9]([a-z0-9-]*[a-z0-9])?:[0-9]{1,5})(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)+$`
